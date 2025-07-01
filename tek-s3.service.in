@@ -1,0 +1,15 @@
+[Unit]
+Description=TEK Steam Sharing Server
+StartLimitInterval=240
+StartLimitBurst=3
+Wants=network-online.target nss-lookup.target
+After=network-online.target nss-lookup.target
+
+[Service]
+Type=notify
+ExecStart=@prefix@/bin/tek-s3
+Restart=on-failure
+RestartSec=60
+
+[Install]
+WantedBy=multi-user.target

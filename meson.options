@@ -1,0 +1,4 @@
+option('zlib_ng', description: 'Use zlib-ng instead of zlib', type: 'feature')
+option('brotli', description: 'Enable brotli compression support for HTTP responses', type: 'feature')
+option('systemd', description: 'Enable systemd support (service file + status notifications)', type: 'feature')
+option('zstd', description: 'Enable zstd compression support for HTTP responses', type: 'feature')
