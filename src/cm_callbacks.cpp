@@ -326,14 +326,15 @@ static void cb_app_info(tek_sc_cm_client *_Nonnull client, void *_Nonnull data,
   delete[] data_pics.app_entries;
   delete &data_pics;
   acc.depot_ids = {};
-  if (missing_keys.empty()) {
-    if (const std::scoped_lock lock(state.manifest_mtx);
-        state.cur_status.load(std::memory_order::relaxed) == status::running ||
+  if (const std::scoped_lock lock(state.manifest_mtx); missing_keys.empty()) {
+    if (state.cur_status.load(std::memory_order::relaxed) == status::running ||
         ++state.num_ready_accs == static_cast<int>(state.accounts.size())) {
       sync_manifest();
       state.cur_status.store(status::running, std::memory_order::relaxed);
     }
     return;
+  } else {
+    state.manifest_dirty = true;
   }
   std::ranges::sort(missing_keys);
   // Schedule depot decryption key requests
