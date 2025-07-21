@@ -71,9 +71,14 @@ static constexpr lws_http_mount mount{.mount_next = nullptr,
                                       .cache_reusable = 0,
                                       .cache_revalidate = 0,
                                       .cache_intermediaries = 0,
+                                      .cache_no = 0,
                                       .origin_protocol = LWSMPRO_CALLBACK,
                                       .mountpoint_len = 1,
-                                      .basic_auth_login_file = nullptr};
+                                      .basic_auth_login_file = nullptr,
+                                      .cgi_chroot_path = nullptr,
+                                      .cgi_wd = nullptr,
+                                      .headers = nullptr,
+                                      .keepalive_timeout = 0};
 
 //===-- Private function --------------------------------------------------===//
 
