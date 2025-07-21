@@ -370,7 +370,7 @@ static int tsc_lws_cb(lws *_Nullable wsi, lws_callback_reasons reason,
       }
       // More data to come
       session.data = session.data.subspan(send_size);
-      state.manifest_mtx.lock();
+      state.download_lock.lock();
       lws_callback_on_writable(wsi);
       return 0;
     } else if (uri_view == "/mrc") { // if (uri_view == "/manifest")
@@ -562,12 +562,12 @@ static int tsc_lws_cb(lws *_Nullable wsi, lws_callback_reasons reason,
     const bool done = send_size == static_cast<int>(session.data.size());
     if (lws_write(wsi, session.data.data(), send_size,
                   done ? LWS_WRITE_HTTP_FINAL : LWS_WRITE_HTTP) < send_size) {
-      state.manifest_mtx.unlock();
+      state.download_lock.unlock();
       return 1;
     }
     if (done) {
       // Close connection
-      state.manifest_mtx.unlock();
+      state.download_lock.unlock();
       return 1;
     }
     // More data to come
@@ -578,6 +578,7 @@ static int tsc_lws_cb(lws *_Nullable wsi, lws_callback_reasons reason,
   case LWS_CALLBACK_EVENT_WAIT_CANCELLED: {
     std::unique_lock lock(state.manifest_mtx);
     if (state.cur_status.load(std::memory_order::relaxed) == status::stopping) {
+      state.download_lock.force_unlock();
       // Destroy libwebsockets context
       const auto lws_ctx = state.lws_ctx;
       state.lws_ctx = nullptr;
