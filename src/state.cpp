@@ -182,7 +182,7 @@ bool ts3_init(void) {
             token_info.steam_id, lws_sorted_usec_list_t{}, nullptr,
             std::move(token), token_info, renew_status::not_scheduled, 0, 0,
             remove_status::none, std::unique_ptr<tek_sc_cm_data_depot_key[]>{},
-            std::set<std::uint32_t>{});
+            std::set<std::uint32_t>{}, false);
       }
     }
     if (const auto apps = doc.FindMember("apps");

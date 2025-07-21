@@ -93,6 +93,9 @@ struct account {
   std::unique_ptr<tek_sc_cm_data_depot_key[]> depot_key_requests;
   /// IDs of depots owned by the acccount.
   std::set<std::uint32_t> depot_ids;
+  /// Value indicating whether the application list for this account has been
+  ///    received at least once.
+  bool ready;
 };
 
 /// Steam depot entry.
