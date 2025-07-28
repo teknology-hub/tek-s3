@@ -601,10 +601,17 @@ static int tsc_lws_cb(lws *_Nullable wsi, lws_callback_reasons reason,
         acc.ren_status = renew_status::scheduled;
       }
     }
-    std::erase_if(state.accounts, [](const auto &pair) {
-      return pair.second.rem_status.load(std::memory_order::relaxed) ==
-             remove_status::remove;
-    });
+    if (std::erase_if(state.accounts,
+                      [](const auto &pair) {
+                        return pair.second.rem_status.load(
+                                   std::memory_order::relaxed) ==
+                               remove_status::remove;
+                      }) &&
+        state.cur_status.load(std::memory_order::relaxed) == status::setup &&
+        state.num_ready_accs == static_cast<int>(state.accounts.size())) {
+      update_manifest();
+      state.cur_status.store(status::running, std::memory_order::relaxed);
+    }
     lock.unlock();
     for (auto ctx : state.signin_ctxs) {
       if (ctx->msg_size > 0) {

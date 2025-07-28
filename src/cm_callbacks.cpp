@@ -558,12 +558,7 @@ static void cb_signed_in(tek_sc_cm_client *_Nonnull client, void *_Nonnull data,
     acc.rem_status.store(remove_status::pending_remove,
                          std::memory_order::relaxed);
     state.state_dirty = true;
-    if (state.cur_status.load(std::memory_order::relaxed) == status::setup) {
-      if (state.num_ready_accs == static_cast<int>(state.accounts.size()) - 1) {
-        sync_manifest();
-        state.cur_status.store(status::running, std::memory_order::relaxed);
-      }
-    } else {
+    if (state.cur_status.load(std::memory_order::relaxed) == status::running) {
       for (auto &app : state.apps | std::views::values) {
         for (auto &depot : app.depots | std::views::values) {
           if (std::erase(depot.accs, &acc)) {
