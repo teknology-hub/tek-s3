@@ -21,6 +21,7 @@
 #include "state.hpp"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <charconv>
 #include <chrono>
@@ -78,7 +79,7 @@ struct http_ctx {
   /// Next chunk of data to send.
   std::span<unsigned char> data;
   /// Send buffer.
-  unsigned char tx_buf[tx_size];
+  std::array<unsigned char, tx_size> tx_buf;
 };
 
 /// Per-session context for WebSocket sessions.
@@ -86,7 +87,7 @@ struct ws_ctx {
   /// Sign-in context.
   std::unique_ptr<signin_ctx> s_ctx;
   /// Send buffer.
-  unsigned char tx_buf[tx_size];
+  std::array<unsigned char, tx_size> tx_buf;
 };
 
 //===-- Private functions -------------------------------------------------===//
@@ -238,8 +239,8 @@ static int tsc_lws_cb(lws *_Nullable wsi, lws_callback_reasons reason,
     }
     const std::string_view uri_view(uri, uri_len);
     auto &session = *reinterpret_cast<http_ctx *>(user);
-    auto buf_cur = session.tx_buf;
-    const auto buf_end = &session.tx_buf[sizeof session.tx_buf];
+    auto buf_cur = session.tx_buf.begin();
+    const auto buf_end = session.tx_buf.end();
     bool send_status_body = true;
     auto status = HTTP_STATUS_NOT_FOUND;
     if (state.cur_status.load(std::memory_order::relaxed) != status::running) {
@@ -358,8 +359,8 @@ static int tsc_lws_cb(lws *_Nullable wsi, lws_callback_reasons reason,
       buf_cur =
           std::ranges::copy(session.data.subspan(0, send_size), buf_cur).out;
       // Send the response packet
-      if (const int size = std::distance(session.tx_buf, buf_cur);
-          lws_write(wsi, session.tx_buf, size,
+      if (const int size = std::distance(session.tx_buf.begin(), buf_cur);
+          lws_write(wsi, session.tx_buf.data(), size,
                     done ? LWS_WRITE_HTTP_FINAL : LWS_WRITE_HTTP) < size) {
         return 1;
       }
@@ -369,7 +370,7 @@ static int tsc_lws_cb(lws *_Nullable wsi, lws_callback_reasons reason,
       }
       // More data to come
       session.data = session.data.subspan(send_size);
-      state.manifest_mtx.lock();
+      state.download_lock.lock();
       lws_callback_on_writable(wsi);
       return 0;
     } else if (uri_view == "/mrc") { // if (uri_view == "/manifest")
@@ -512,7 +513,8 @@ static int tsc_lws_cb(lws *_Nullable wsi, lws_callback_reasons reason,
       }
       // Send the response
       buf_cur = std::ranges::move(mrc_view, buf_cur).out;
-      lws_write(wsi, session.tx_buf, std::distance(session.tx_buf, buf_cur),
+      lws_write(wsi, session.tx_buf.data(),
+                std::distance(session.tx_buf.begin(), buf_cur),
                 LWS_WRITE_HTTP_FINAL);
       return 1;
     } // if (uri_view == "/manifest") else if (uri_view == "/mrc")
@@ -545,7 +547,8 @@ static int tsc_lws_cb(lws *_Nullable wsi, lws_callback_reasons reason,
         return 1;
       }
     }
-    lws_write(wsi, session.tx_buf, std::distance(session.tx_buf, buf_cur),
+    lws_write(wsi, session.tx_buf.data(),
+              std::distance(session.tx_buf.begin(), buf_cur),
               LWS_WRITE_HTTP_FINAL);
     return 1;
   } // case LWS_CALLBACK_HTTP
@@ -559,12 +562,12 @@ static int tsc_lws_cb(lws *_Nullable wsi, lws_callback_reasons reason,
     const bool done = send_size == static_cast<int>(session.data.size());
     if (lws_write(wsi, session.data.data(), send_size,
                   done ? LWS_WRITE_HTTP_FINAL : LWS_WRITE_HTTP) < send_size) {
-      state.manifest_mtx.unlock();
+      state.download_lock.unlock();
       return 1;
     }
     if (done) {
       // Close connection
-      state.manifest_mtx.unlock();
+      state.download_lock.unlock();
       return 1;
     }
     // More data to come
@@ -575,6 +578,7 @@ static int tsc_lws_cb(lws *_Nullable wsi, lws_callback_reasons reason,
   case LWS_CALLBACK_EVENT_WAIT_CANCELLED: {
     std::unique_lock lock(state.manifest_mtx);
     if (state.cur_status.load(std::memory_order::relaxed) == status::stopping) {
+      state.download_lock.force_unlock();
       // Destroy libwebsockets context
       const auto lws_ctx = state.lws_ctx;
       state.lws_ctx = nullptr;

@@ -93,6 +93,9 @@ struct account {
   std::unique_ptr<tek_sc_cm_data_depot_key[]> depot_key_requests;
   /// IDs of depots owned by the acccount.
   std::set<std::uint32_t> depot_ids;
+  /// Value indicating whether the application list for this account has been
+  ///    received at least once.
+  bool ready;
 };
 
 /// Steam depot entry.
@@ -122,6 +125,40 @@ struct mrc_cache {
   std::uint64_t mrc;
 };
 
+/// Reference-counted lock that locks associated mutex when its reference
+///    counter is not zero.
+class [[gnu::visibility("internal")]] ref_counted_lock {
+  /// Mutex to lock when there are active references.
+  std::recursive_mutex &mtx;
+  /// Reference counter;
+  int ref_count;
+
+public:
+  constexpr ref_counted_lock(std::recursive_mutex &mtx) noexcept
+      : mtx(mtx), ref_count(0) {}
+  /// Increment reference counter and lock the mutex if its previous value was
+  /// zero.
+  void lock() {
+    if (!ref_count++) {
+      mtx.lock();
+    }
+  }
+  /// Decrement reference counter and unlock the mutex if its new value is zero.
+  void unlock() {
+    if (!--ref_count) {
+      mtx.unlock();
+    }
+  }
+  /// Unlock the mutex if it has active references, and reset the reference
+  /// counter.
+  void force_unlock() {
+    if (ref_count) {
+      mtx.unlock();
+    }
+    ref_count = 0;
+  }
+};
+
 /// Wrapper around a buffer pointer with known size.
 struct sized_buf {
   /// Pointer to the buffer.
@@ -140,6 +177,8 @@ struct ts3_state {
   std::atomic_uint32_t num_cm_connections;
   /// Mutex for locking concurrent access to all manifest-related fields.
   std::recursive_mutex manifest_mtx;
+  /// Lock for @ref manifest_mtx during manifest downloads.
+  ref_counted_lock download_lock{manifest_mtx};
   /// Timestamp (seconds since Epoch) of last manifest update.
   std::time_t timestamp;
   // Steam accounts that the server has access to, by Steam IDs.

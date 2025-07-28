@@ -159,6 +159,9 @@ static void sync_manifest() {
   access(read_write, 3)]]
 static void cb_depot_key(tek_sc_cm_client *_Nonnull client, void *_Nonnull data,
                          void *_Nonnull user_data) {
+  if (state.cur_status.load(std::memory_order::relaxed) == status::stopping) {
+    return;
+  }
   auto &data_dk = *reinterpret_cast<tek_sc_cm_data_depot_key *>(data);
   auto &acc = *reinterpret_cast<account *>(user_data);
   // TEK_SC_CM_ERESULT_blocked is returned for pre-download depots, ignore it
@@ -179,6 +182,7 @@ static void cb_depot_key(tek_sc_cm_client *_Nonnull client, void *_Nonnull data,
   }
   if (tek_sc_err_success(&data_dk.result)) {
     const std::scoped_lock lock(state.manifest_mtx);
+    state.manifest_dirty = true;
     std::ranges::move(data_dk.key, state.depot_keys[data_dk.depot_id]);
   }
   if (!--acc.rem_dk_burst) {
@@ -193,12 +197,9 @@ static void cb_depot_key(tek_sc_cm_client *_Nonnull client, void *_Nonnull data,
       }
     } else {
       acc.depot_key_requests.reset();
-      if (const std::scoped_lock lock(state.manifest_mtx);
-          state.cur_status.load(std::memory_order::relaxed) ==
-              status::running ||
-          ++state.num_ready_accs == static_cast<int>(state.accounts.size())) {
+      if (state.cur_status.load(std::memory_order::relaxed) ==
+          status::running) {
         sync_manifest();
-        state.cur_status.store(status::running, std::memory_order::relaxed);
       }
     }
   }
@@ -326,15 +327,18 @@ static void cb_app_info(tek_sc_cm_client *_Nonnull client, void *_Nonnull data,
   delete[] data_pics.app_entries;
   delete &data_pics;
   acc.depot_ids = {};
-  if (const std::scoped_lock lock(state.manifest_mtx); missing_keys.empty()) {
-    if (state.cur_status.load(std::memory_order::relaxed) == status::running ||
+  if (state.cur_status.load(std::memory_order::relaxed) == status::running) {
+    sync_manifest();
+  } else if (!acc.ready) {
+    acc.ready = true;
+    if (const std::scoped_lock lock(state.manifest_mtx);
         ++state.num_ready_accs == static_cast<int>(state.accounts.size())) {
       sync_manifest();
       state.cur_status.store(status::running, std::memory_order::relaxed);
     }
+  }
+  if (missing_keys.empty()) {
     return;
-  } else {
-    state.manifest_dirty = true;
   }
   std::ranges::sort(missing_keys);
   // Schedule depot decryption key requests
