@@ -18,6 +18,7 @@
 
 #include "null_attrs.h" // IWYU pragma: keep
 
+#include <libwebsockets.h>
 #include <stdatomic.h> // IWYU pragma: keep
 #include <stddef.h>
 #include <stdint.h>
