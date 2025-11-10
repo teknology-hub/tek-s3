@@ -97,7 +97,11 @@ static inline void print_os_err(tek_sc_os_errc errc,
 
 } // namespace
 
+} // namespace tek::s3
+
 //===-- Internal functions ------------------------------------------------===//
+
+using namespace tek::s3;
 
 extern "C" {
 
@@ -413,5 +417,3 @@ int ts3_cleanup(void) {
 }
 
 } // extern "C"
-
-} // namespace tek::s3
