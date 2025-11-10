@@ -49,7 +49,7 @@ namespace tek::s3 {
 namespace {
 
 #ifdef _WIN32
-static constexpr auto &timegm = ::_mkgmtime;
+static constexpr auto &timegm{::_mkgmtime};
 #endif // _WIN32
 
 //===-- Private types -----------------------------------------------------===//
@@ -98,7 +98,7 @@ struct ws_ctx {
 ///    Pointer to `mrc_await_entry` associated with the request.
 [[using gnu: nonnull(2), access(read_write, 2)]]
 static void cb_mrc(tek_sc_cm_client *, void *_Nonnull data, void *) {
-  auto &entry = *reinterpret_cast<mrc_await_entry *>(data);
+  auto &entry{*reinterpret_cast<mrc_await_entry *>(data)};
   entry.finished.store(1, std::memory_order::relaxed);
   ts3_os_futex_wake(&entry.finished);
 }
@@ -114,8 +114,8 @@ negotiate_enc(const std::string_view &&accept) noexcept {
   if (accept.empty()) {
     return enc_type::none;
   }
-  auto enc = enc_type::none;
-  auto size = state.manifest.size;
+  auto enc{enc_type::none};
+  auto size{state.manifest.size};
   if (state.manifest_deflate.buf && accept.contains("deflate") &&
       state.manifest_deflate.size < size) {
     enc = enc_type::deflate;
@@ -166,15 +166,17 @@ static int tsc_lws_cb(lws *_Nullable wsi, lws_callback_reasons reason,
                       std::size_t len) {
   switch (reason) {
   case LWS_CALLBACK_ESTABLISHED: {
-    char uri[sizeof("/signin")];
-    const int uri_len = lws_hdr_copy(wsi, uri, sizeof uri, WSI_TOKEN_GET_URI);
+    std::array<char, sizeof("/signin")> uri;
+    const int uri_len{
+        lws_hdr_copy(wsi, uri.data(), uri.size(), WSI_TOKEN_GET_URI)};
     if (uri_len <= 0) {
       return 1;
     }
-    if (std::string_view(uri, uri_len) != "/signin") {
+    if (std::string_view{uri.data(), static_cast<std::size_t>(uri_len)} !=
+        "/signin") {
       return 1;
     }
-    auto &session = *reinterpret_cast<ws_ctx *>(user);
+    auto &session{*reinterpret_cast<ws_ctx *>(user)};
     session.s_ctx.reset(
         new signin_ctx{.cm_client = {nullptr, tek_sc_cm_client_destroy},
                        .wsi = wsi,
@@ -189,14 +191,14 @@ static int tsc_lws_cb(lws *_Nullable wsi, lws_callback_reasons reason,
     return 0;
   }
   case LWS_CALLBACK_CLOSED: {
-    auto &session = *reinterpret_cast<ws_ctx *>(user);
+    auto &session{*reinterpret_cast<ws_ctx *>(user)};
     std::erase(state.signin_ctxs, session.s_ctx.get());
     if (session.s_ctx->cm_client) {
       tek_sc_cm_disconnect(session.s_ctx->cm_client.get());
     } else {
       session.s_ctx->state = signin_state::disonnected;
     }
-    for (auto cur_state = session.s_ctx->state;
+    for (auto cur_state{session.s_ctx->state};
          cur_state != signin_state::disonnected;
          cur_state = session.s_ctx->state) {
       ts3_os_futex_wait(
@@ -219,8 +221,8 @@ static int tsc_lws_cb(lws *_Nullable wsi, lws_callback_reasons reason,
     return signin_process_msg(*reinterpret_cast<ws_ctx *>(user)->s_ctx.get(),
                               reinterpret_cast<char *>(in), len);
   case LWS_CALLBACK_SERVER_WRITEABLE: {
-    auto &session = *reinterpret_cast<ws_ctx *>(user);
-    const std::scoped_lock lock(session.s_ctx->mtx);
+    auto &session{*reinterpret_cast<ws_ctx *>(user)};
+    const std::scoped_lock lock{session.s_ctx->mtx};
     if (session.s_ctx->msg_size <= 0) {
       break;
     }
@@ -233,16 +235,16 @@ static int tsc_lws_cb(lws *_Nullable wsi, lws_callback_reasons reason,
   case LWS_CALLBACK_HTTP: {
     char *uri;
     int uri_len;
-    const int method = lws_http_get_uri_and_method(wsi, &uri, &uri_len);
+    const int method{lws_http_get_uri_and_method(wsi, &uri, &uri_len)};
     if (method < 0) {
       return 1;
     }
-    const std::string_view uri_view(uri, uri_len);
-    auto &session = *reinterpret_cast<http_ctx *>(user);
-    auto buf_cur = session.tx_buf.begin();
-    const auto buf_end = session.tx_buf.end();
-    bool send_status_body = true;
-    auto status = HTTP_STATUS_NOT_FOUND;
+    const std::string_view uri_view{uri, static_cast<std::size_t>(uri_len)};
+    auto &session{*reinterpret_cast<http_ctx *>(user)};
+    auto buf_cur{session.tx_buf.begin()};
+    const auto buf_end{session.tx_buf.end()};
+    bool send_status_body{true};
+    auto status{HTTP_STATUS_NOT_FOUND};
     if (state.cur_status.load(std::memory_order::relaxed) != status::running) {
       status = HTTP_STATUS_SERVICE_UNAVAILABLE;
       goto send_status;
@@ -252,16 +254,17 @@ static int tsc_lws_cb(lws *_Nullable wsi, lws_callback_reasons reason,
         status = HTTP_STATUS_METHOD_NOT_ALLOWED;
         goto send_status;
       }
-      char hdr_buf[256];
+      std::array<char, 256> hdr_buf;
       // Check If-Modified-Since header
-      int hdr_len = lws_hdr_copy(wsi, hdr_buf, sizeof hdr_buf,
-                                 WSI_TOKEN_HTTP_IF_MODIFIED_SINCE);
+      int hdr_len{lws_hdr_copy(wsi, hdr_buf.data(), hdr_buf.size(),
+                               WSI_TOKEN_HTTP_IF_MODIFIED_SINCE)};
       if (hdr_len < 0) {
         return 1;
       }
-      const std::scoped_lock lock(state.manifest_mtx);
+      const std::scoped_lock lock{state.manifest_mtx};
       if (hdr_len) {
-        std::istringstream stream({hdr_buf, static_cast<std::size_t>(hdr_len)});
+        std::istringstream stream{
+            {hdr_buf.data(), static_cast<std::size_t>(hdr_len)}};
         stream.imbue(std::locale::classic());
         std::tm tm;
         stream >> std::get_time(&tm, "%a, %d %b %Y %X GMT");
@@ -275,14 +278,18 @@ static int tsc_lws_cb(lws *_Nullable wsi, lws_callback_reasons reason,
         }
       }
       // Read Accept-Encoding header
-      hdr_len = lws_hdr_copy(wsi, hdr_buf, sizeof hdr_buf,
+      hdr_len = lws_hdr_copy(wsi, hdr_buf.data(), hdr_buf.size(),
                              WSI_TOKEN_HTTP_ACCEPT_ENCODING);
       if (hdr_len < 0) {
         return 1;
       }
       // Select response encoding
-      const auto enc =
-          negotiate_enc({hdr_buf, static_cast<std::size_t>(hdr_len)});
+      const auto enc{
+          negotiate_enc({hdr_buf.data(), static_cast<std::size_t>(hdr_len)})};
+      auto set_enc{[&hdr_buf, &hdr_len](const std::string_view &&name) {
+        std::ranges::copy(name, hdr_buf.data());
+        hdr_len = name.length();
+      }};
       switch (enc) {
       case enc_type::none:
         session.data = {state.manifest.buf.get(), state.manifest.size};
@@ -290,18 +297,14 @@ static int tsc_lws_cb(lws *_Nullable wsi, lws_callback_reasons reason,
       case enc_type::deflate: {
         session.data = {state.manifest_deflate.buf.get(),
                         state.manifest_deflate.size};
-        constexpr std::string_view enc_name = "deflate";
-        std::ranges::copy(enc_name, hdr_buf);
-        hdr_len = enc_name.length();
+        set_enc("deflate");
         break;
       }
 #ifdef TEK_S3B_BROTLI
       case enc_type::brotli: {
         session.data = {state.manifest_brotli.buf.get(),
                         state.manifest_brotli.size};
-        constexpr std::string_view enc_name = "br";
-        std::ranges::copy(enc_name, hdr_buf);
-        hdr_len = enc_name.length();
+        set_enc("br");
         break;
       }
 #endif // def TEK_S3B_BROTLI
@@ -309,9 +312,7 @@ static int tsc_lws_cb(lws *_Nullable wsi, lws_callback_reasons reason,
       case enc_type::zstd: {
         session.data = {state.manifest_zstd.buf.get(),
                         state.manifest_zstd.size};
-        constexpr std::string_view enc_name = "zstd";
-        std::ranges::copy(enc_name, hdr_buf);
-        hdr_len = enc_name.length();
+        set_enc("zstd");
         break;
       }
 #endif // def TEK_S3B_ZSTD
@@ -322,7 +323,7 @@ static int tsc_lws_cb(lws *_Nullable wsi, lws_callback_reasons reason,
                                       session.data.size(), &buf_cur, buf_end)) {
         return 1;
       }
-      if (constexpr std::string_view cache_control = "no-cache";
+      if (constexpr std::string_view cache_control{"no-cache"};
           lws_add_http_header_by_token(
               wsi, WSI_TOKEN_HTTP_CACHE_CONTROL,
               reinterpret_cast<const unsigned char *>(cache_control.data()),
@@ -332,17 +333,17 @@ static int tsc_lws_cb(lws *_Nullable wsi, lws_callback_reasons reason,
       if (enc != enc_type::none) {
         if (lws_add_http_header_by_token(
                 wsi, WSI_TOKEN_HTTP_CONTENT_ENCODING,
-                reinterpret_cast<const unsigned char *>(hdr_buf), hdr_len,
-                &buf_cur, buf_end)) {
+                reinterpret_cast<const unsigned char *>(hdr_buf.data()),
+                hdr_len, &buf_cur, buf_end)) {
           return 1;
         }
       }
       // Set Last-Modified header
-      const auto res = std::format_to_n(
-          hdr_buf, sizeof hdr_buf, std::locale::classic(),
+      const auto res{std::format_to_n(
+          hdr_buf.data(), hdr_buf.size(), std::locale::classic(),
           "{:%a, %d %b %Y %X} GMT",
-          std::chrono::system_clock::from_time_t(state.timestamp));
-      if (const std::string_view last_mod(hdr_buf, res.out);
+          std::chrono::system_clock::from_time_t(state.timestamp))};
+      if (const std::string_view last_mod{hdr_buf.data(), res.out};
           lws_add_http_header_by_token(
               wsi, WSI_TOKEN_HTTP_LAST_MODIFIED,
               reinterpret_cast<const unsigned char *>(last_mod.data()),
@@ -353,13 +354,14 @@ static int tsc_lws_cb(lws *_Nullable wsi, lws_callback_reasons reason,
         return 1;
       }
       // Determine response body size
-      const auto send_size = std::min<std::size_t>(
-          session.data.size(), std::distance(buf_cur, buf_end));
-      const bool done = send_size == session.data.size();
+      const auto send_size{std::min<std::size_t>(
+          session.data.size(), std::distance(buf_cur, buf_end))};
+      const bool done{send_size == session.data.size()};
       buf_cur =
           std::ranges::copy(session.data.subspan(0, send_size), buf_cur).out;
       // Send the response packet
-      if (const int size = std::distance(session.tx_buf.begin(), buf_cur);
+      if (const int size{
+              static_cast<int>(std::distance(session.tx_buf.begin(), buf_cur))};
           lws_write(wsi, session.tx_buf.data(), size,
                     done ? LWS_WRITE_HTTP_FINAL : LWS_WRITE_HTTP) < size) {
         return 1;
@@ -379,59 +381,62 @@ static int tsc_lws_cb(lws *_Nullable wsi, lws_callback_reasons reason,
         goto send_status;
       }
       // Parse URL arguments
-      char buf[21 + sizeof("manifest_id=")];
-      int buf_len =
-          lws_get_urlarg_by_name_safe(wsi, "app_id=", buf, sizeof buf);
+      std::array<char, sizeof("manifest_id=") + 21> buf;
+      int buf_len{
+          lws_get_urlarg_by_name_safe(wsi, "app_id=", buf.data(), buf.size())};
       if (buf_len <= 0) {
         status = HTTP_STATUS_BAD_REQUEST;
         goto send_status;
       }
       std::uint32_t app_id;
-      if (std::from_chars(buf, &buf[buf_len], app_id).ec != std::errc{}) {
+      if (std::from_chars(buf.data(), &buf[buf_len], app_id).ec !=
+          std::errc{}) {
         status = HTTP_STATUS_BAD_REQUEST;
         goto send_status;
       }
-      buf_len = lws_get_urlarg_by_name_safe(wsi, "depot_id=", buf, sizeof buf);
+      buf_len =
+          lws_get_urlarg_by_name_safe(wsi, "depot_id=", buf.data(), buf.size());
       if (buf_len <= 0) {
         status = HTTP_STATUS_BAD_REQUEST;
         goto send_status;
       }
       std::uint32_t depot_id;
-      if (std::from_chars(buf, &buf[buf_len], depot_id).ec != std::errc{}) {
+      if (std::from_chars(buf.data(), &buf[buf_len], depot_id).ec !=
+          std::errc{}) {
         status = HTTP_STATUS_BAD_REQUEST;
         goto send_status;
       }
-      buf_len =
-          lws_get_urlarg_by_name_safe(wsi, "manifest_id=", buf, sizeof buf);
+      buf_len = lws_get_urlarg_by_name_safe(wsi, "manifest_id=", buf.data(),
+                                            buf.size());
       if (buf_len <= 0) {
         status = HTTP_STATUS_BAD_REQUEST;
         goto send_status;
       }
       std::uint64_t manifest_id;
-      if (std::from_chars(buf, &buf[buf_len], manifest_id).ec != std::errc{}) {
+      if (std::from_chars(buf.data(), &buf[buf_len], manifest_id).ec !=
+          std::errc{}) {
         status = HTTP_STATUS_BAD_REQUEST;
         goto send_status;
       }
       std::uint64_t mrc;
       int rem_time;
       // Check if the manifest request code is present in the cache
-      const auto it = state.mrcs.find(manifest_id);
+      const auto it{state.mrcs.find(manifest_id)};
       mrc = it == state.mrcs.end() ? 0 : it->second.mrc;
-      if (const auto it = state.mrcs.find(manifest_id);
-          it == state.mrcs.end()) {
+      if (!mrc) {
         // If not, fetch it from Steam CM
-        std::unique_lock lock(state.manifest_mtx);
-        const auto &app = state.apps.find(app_id);
+        std::unique_lock lock{state.manifest_mtx};
+        const auto &app{state.apps.find(app_id)};
         if (app == state.apps.end()) {
           status = HTTP_STATUS_UNAUTHORIZED;
           goto send_status;
         }
-        const auto depot = app->second.depots.find(depot_id);
+        const auto depot{app->second.depots.find(depot_id)};
         if (depot == app->second.depots.end()) {
           status = HTTP_STATUS_UNAUTHORIZED;
           goto send_status;
         }
-        const auto cm_client = (*depot->second.next_acc)->cm_client;
+        const auto cm_client{(*depot->second.next_acc)->cm_client};
         if (++depot->second.next_acc == depot->second.accs.cend()) {
           depot->second.next_acc = depot->second.accs.cbegin();
         }
@@ -462,17 +467,17 @@ static int tsc_lws_cb(lws *_Nullable wsi, lws_callback_reasons reason,
         if (state.mrcs.size() >= 128) {
           // Don't keep more than 128 entries in the cache at any given time, to
           //    avoid memory overflows
-          const auto first_it = state.mrcs.begin();
+          const auto first_it{state.mrcs.begin()};
           lws_sul_cancel(&first_it->second.sul);
           state.mrcs.erase(first_it);
         }
-        auto &cache_entry =
-            state.mrcs.emplace(manifest_id, mrc_cache{}).first->second;
+        auto &cache_entry{
+            state.mrcs.emplace(manifest_id, mrc_cache{}).first->second};
         // Steam refreshes MRCs on every *4 and *9 minute, that is every 5
         //    minutes with offset of 240 seconds from 5-minute boundary, use
         //    that info to schedule cache entry removal on next refresh
-        const auto now = std::chrono::system_clock::to_time_t(
-            std::chrono::system_clock::now());
+        const auto now{std::chrono::system_clock::to_time_t(
+            std::chrono::system_clock::now())};
         rem_time = ((now + 60) / 300 * 300 + 240) - now;
         cache_entry.sul.us = lws_now_usecs() + rem_time * LWS_US_PER_SEC;
         cache_entry.sul.cb = remove_mrc_cache;
@@ -484,24 +489,25 @@ static int tsc_lws_cb(lws *_Nullable wsi, lws_callback_reasons reason,
         mrc = it->second.mrc;
         rem_time = (it->second.sul.us - lws_now_usecs()) / LWS_US_PER_SEC;
       } // if (it == state.mrcs.end()) else
-      const auto res = std::to_chars(buf, &buf[sizeof buf], mrc);
+      const auto res{std::to_chars(buf.begin(), buf.end(), mrc)};
       if (res.ec != std::errc{}) {
         status = HTTP_STATUS_INTERNAL_SERVER_ERROR;
         goto send_status;
       }
-      const std::string_view mrc_view(buf, res.ptr);
+      const std::string_view mrc_view{buf.data(), res.ptr};
       // Write headers
       if (lws_add_http_common_headers(wsi, HTTP_STATUS_OK,
                                       "text/plain; charset=utf-8",
                                       mrc_view.length(), &buf_cur, buf_end)) {
         return 1;
       }
-      char cache_control_buf[sizeof("max-age=") + 3];
-      if (const std::string_view cache_control(
-              cache_control_buf,
-              std::format_to_n(cache_control_buf, sizeof cache_control_buf,
-                               std::locale::classic(), "max-age={}", rem_time)
-                  .out);
+      std::array<char, sizeof("max-age=") + 3> cache_control_buf;
+      if (const std::string_view cache_control{
+              cache_control_buf.data(),
+              std::format_to_n(cache_control_buf.data(),
+                               cache_control_buf.size(), std::locale::classic(),
+                               "max-age={}", rem_time)
+                  .out};
           lws_add_http_header_by_token(
               wsi, WSI_TOKEN_HTTP_CACHE_CONTROL,
               reinterpret_cast<const unsigned char *>(cache_control.data()),
@@ -512,9 +518,9 @@ static int tsc_lws_cb(lws *_Nullable wsi, lws_callback_reasons reason,
         return 1;
       }
       // Send the response
-      buf_cur = std::ranges::move(mrc_view, buf_cur).out;
+      buf_cur = std::ranges::copy(mrc_view, buf_cur).out;
       lws_write(wsi, session.tx_buf.data(),
-                std::distance(session.tx_buf.begin(), buf_cur),
+                std::distance(session.tx_buf.data(), buf_cur),
                 LWS_WRITE_HTTP_FINAL);
       return 1;
     } // if (uri_view == "/manifest") else if (uri_view == "/mrc")
@@ -522,13 +528,13 @@ static int tsc_lws_cb(lws *_Nullable wsi, lws_callback_reasons reason,
     // Send just the status code and (unless disabled) its text representation
     //    as the body
     if (send_status_body) {
-      char status_buf[10];
-      const auto res = std::to_chars(status_buf, &status_buf[sizeof status_buf],
-                                     static_cast<unsigned>(status));
+      std::array<char, 10> status_buf;
+      const auto res{std::to_chars(status_buf.begin(), status_buf.end(),
+                                   static_cast<unsigned>(status))};
       if (res.ec != std::errc{}) {
         return 1;
       }
-      const std::string_view status_view(status_buf, res.ptr);
+      const std::string_view status_view{status_buf.data(), res.ptr};
       if (lws_add_http_common_headers(wsi, status, "text/plain; charset=utf-8",
                                       status_view.length(), &buf_cur,
                                       buf_end)) {
@@ -537,7 +543,7 @@ static int tsc_lws_cb(lws *_Nullable wsi, lws_callback_reasons reason,
       if (lws_finalize_http_header(wsi, &buf_cur, buf_end)) {
         return 1;
       }
-      buf_cur = std::ranges::move(status_view, buf_cur).out;
+      buf_cur = std::ranges::copy(status_view, buf_cur).out;
     } else {
       if (lws_add_http_common_headers(wsi, status, nullptr, 0, &buf_cur,
                                       buf_end)) {
@@ -557,9 +563,10 @@ static int tsc_lws_cb(lws *_Nullable wsi, lws_callback_reasons reason,
       // Ignore unrelated callbacks
       break;
     }
-    auto &session = *reinterpret_cast<http_ctx *>(user);
-    const int send_size = std::min(session.data.size(), tx_size);
-    const bool done = send_size == static_cast<int>(session.data.size());
+    auto &session{*reinterpret_cast<http_ctx *>(user)};
+    const int send_size{
+        static_cast<int>(std::min(session.data.size(), tx_size))};
+    const bool done{send_size == static_cast<int>(session.data.size())};
     if (lws_write(wsi, session.data.data(), send_size,
                   done ? LWS_WRITE_HTTP_FINAL : LWS_WRITE_HTTP) < send_size) {
       state.download_lock.unlock();
@@ -576,11 +583,11 @@ static int tsc_lws_cb(lws *_Nullable wsi, lws_callback_reasons reason,
     return 0;
   }
   case LWS_CALLBACK_EVENT_WAIT_CANCELLED: {
-    std::unique_lock lock(state.manifest_mtx);
+    std::unique_lock lock{state.manifest_mtx};
     if (state.cur_status.load(std::memory_order::relaxed) == status::stopping) {
       state.download_lock.force_unlock();
       // Destroy libwebsockets context
-      const auto lws_ctx = state.lws_ctx;
+      const auto lws_ctx{state.lws_ctx};
       state.lws_ctx = nullptr;
       for (auto &acc : state.accounts | std::views::values) {
         if (acc.ren_status == renew_status::scheduled) {

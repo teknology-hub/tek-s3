@@ -70,11 +70,11 @@ struct [[gnu::visibility("internal")]] bin_vdf_node {
       if (byte == '\x08') {
         return;
       }
-      auto nullt = std::ranges::find(cur, end, '\0');
+      auto nullt{std::ranges::find(cur, end, '\0')};
       if (nullt == end) {
         return;
       }
-      const std::string_view name(cur, nullt);
+      const std::string_view name{cur, nullt};
       cur = nullt + 1;
       switch (byte) {
       case '\x00': {
@@ -112,7 +112,7 @@ struct [[gnu::visibility("internal")]] bin_vdf_node {
 /// @param [in] err
 ///    tek-steamclient error description.
 static void print_err(const tek_sc_err &err) noexcept {
-  auto msgs = tek_sc_err_get_msgs(&err);
+  auto msgs{tek_sc_err_get_msgs(&err)};
   std::println(std::cerr, "  Error type: ({}) {}\n  Primary message: ({}) {}",
                static_cast<int>(err.type), msgs.type_str,
                static_cast<int>(err.primary), msgs.primary);
@@ -191,7 +191,7 @@ static bool check_token_err(const tek_sc_err &err, account &acc) {
 }
 
 static void sync_manifest() {
-  const std::scoped_lock lock(state.manifest_mtx);
+  const std::scoped_lock lock{state.manifest_mtx};
   for (auto &app : state.apps | std::views::values) {
     if (std::erase_if(app.depots, [](const auto &pair) {
           return pair.second.accs.empty();
@@ -222,8 +222,8 @@ static void cb_depot_key(tek_sc_cm_client *_Nonnull client, void *_Nonnull data,
   if (state.cur_status.load(std::memory_order::relaxed) == status::stopping) {
     return;
   }
-  auto &data_dk = *reinterpret_cast<tek_sc_cm_data_depot_key *>(data);
-  auto &acc = *reinterpret_cast<account *>(user_data);
+  auto &data_dk{*reinterpret_cast<tek_sc_cm_data_depot_key *>(data)};
+  auto &acc{*reinterpret_cast<account *>(user_data)};
   // TEK_SC_CM_ERESULT_blocked is returned for pre-download depots, ignore it
   if (!tek_sc_err_success(&data_dk.result) &&
       data_dk.result.type != TEK_SC_ERR_TYPE_steam_cm &&
@@ -241,14 +241,14 @@ static void cb_depot_key(tek_sc_cm_client *_Nonnull client, void *_Nonnull data,
     return;
   }
   if (tek_sc_err_success(&data_dk.result)) {
-    const std::scoped_lock lock(state.manifest_mtx);
+    const std::scoped_lock lock{state.manifest_mtx};
     state.manifest_dirty = true;
     std::ranges::move(data_dk.key, state.depot_keys[data_dk.depot_id]);
   }
   if (!--acc.rem_dk_burst) {
     if (acc.rem_dk_total) {
       // Schedule the next burst
-      const int burst_size = std::min(5, acc.rem_dk_total);
+      const int burst_size{std::min(5, acc.rem_dk_total)};
       acc.rem_dk_burst = burst_size;
       for (int i = 0; i < burst_size; ++i) {
         tek_sc_cm_get_depot_key(client,
@@ -277,8 +277,8 @@ static void cb_depot_key(tek_sc_cm_client *_Nonnull client, void *_Nonnull data,
   access(read_write, 3)]]
 static void cb_app_info(tek_sc_cm_client *_Nonnull client, void *_Nonnull data,
                         void *_Nonnull user_data) {
-  auto &data_pics = *reinterpret_cast<tek_sc_cm_data_pics *>(data);
-  auto &acc = *reinterpret_cast<account *>(user_data);
+  auto &data_pics{*reinterpret_cast<tek_sc_cm_data_pics *>(data)};
+  auto &acc{*reinterpret_cast<account *>(user_data)};
   if (!tek_sc_err_success(&data_pics.result)) {
     std::println(std::cerr, "Failed to get PICS info for account {}'s apps:",
                  acc.token_info.steam_id);
@@ -290,7 +290,8 @@ static void cb_app_info(tek_sc_cm_client *_Nonnull client, void *_Nonnull data,
   }
   // App/depot IDs which don't have their decryption keys cached yet.
   std::vector<std::pair<std::uint32_t, std::uint32_t>> missing_keys;
-  const std::span apps(data_pics.app_entries, data_pics.num_app_entries);
+  const std::span apps{data_pics.app_entries,
+                       static_cast<std::size_t>(data_pics.num_app_entries)};
   for (const auto &app : apps) {
     if (tek_sc_err_success(&app.result)) {
       continue;
@@ -307,15 +308,15 @@ static void cb_app_info(tek_sc_cm_client *_Nonnull client, void *_Nonnull data,
     goto app_err;
   }
   // Extract depot IDs and name from the app info
-  for (const std::scoped_lock lock(state.manifest_mtx);
+  for (const std::scoped_lock lock{state.manifest_mtx};
        const auto &app : apps) {
     if (!tek_sc_err_success(&app.result)) {
       continue;
     }
-    std::string_view view(reinterpret_cast<const char *>(app.data),
-                          app.data_size);
+    std::string_view view{reinterpret_cast<const char *>(app.data),
+                          static_cast<std::size_t>(app.data_size)};
     std::error_code ec;
-    const auto vdf = tyti::vdf::read(view.begin(), view.end(), ec);
+    const auto vdf{tyti::vdf::read(view.begin(), view.end(), ec)};
     if (ec != std::error_code{}) {
       std::println(
           std::cerr,
@@ -323,12 +324,12 @@ static void cb_app_info(tek_sc_cm_client *_Nonnull client, void *_Nonnull data,
           app.id, acc.token_info.steam_id);
       goto app_err;
     }
-    const auto depots = vdf.childs.find("depots");
+    const auto depots{vdf.childs.find("depots")};
     if (depots != vdf.childs.cend()) {
       // Collect IDs of depots present in the app
       std::vector<std::uint32_t> depot_ids;
-      if (const auto workshopdepot =
-              depots->second->attribs.find("workshopdepot");
+      if (const auto workshopdepot{
+              depots->second->attribs.find("workshopdepot")};
           workshopdepot != depots->second->attribs.cend()) {
         view = workshopdepot->second;
         if (std::uint32_t depot_id;
@@ -347,31 +348,31 @@ static void cb_app_info(tek_sc_cm_client *_Nonnull client, void *_Nonnull data,
             std::errc{}) {
           continue;
         }
-        const auto it = acc.depot_ids.find(depot_id);
+        const auto it{acc.depot_ids.find(depot_id)};
         if (it != acc.depot_ids.end()) {
           acc.depot_ids.erase(it);
           depot_ids.emplace_back(depot_id);
         }
       }
       if (!depot_ids.empty()) {
-        const auto [it, emplaced] = state.apps.try_emplace(app.id);
+        const auto [it, emplaced]{state.apps.try_emplace(app.id)};
         if (emplaced) {
           state.manifest_dirty = true;
         }
-        auto &app_ent = it->second;
-        const auto common = vdf.childs.find("common");
+        auto &app_ent{it->second};
+        const auto common{vdf.childs.find("common")};
         if (common != vdf.childs.cend()) {
-          const auto name = common->second->attribs.find("name");
+          const auto name{common->second->attribs.find("name")};
           if (name != common->second->attribs.cend()) {
             app_ent.name = std::move(name->second);
           }
         }
         for (auto depot_id : depot_ids) {
-          const auto [it, emplaced] = app_ent.depots.try_emplace(depot_id);
+          const auto [it, emplaced]{app_ent.depots.try_emplace(depot_id)};
           if (emplaced) {
             state.manifest_dirty = true;
           }
-          auto &depot_ent = it->second;
+          auto &depot_ent{it->second};
           if (emplaced || !std::ranges::contains(depot_ent.accs, &acc)) {
             depot_ent.accs.emplace_back(&acc);
             depot_ent.next_acc = depot_ent.accs.cbegin();
@@ -391,7 +392,7 @@ static void cb_app_info(tek_sc_cm_client *_Nonnull client, void *_Nonnull data,
     sync_manifest();
   } else if (!acc.ready) {
     acc.ready = true;
-    if (const std::scoped_lock lock(state.manifest_mtx);
+    if (const std::scoped_lock lock{state.manifest_mtx};
         ++state.num_ready_accs == static_cast<int>(state.accounts.size())) {
       sync_manifest();
       state.cur_status.store(status::running, std::memory_order::relaxed);
@@ -405,8 +406,8 @@ static void cb_app_info(tek_sc_cm_client *_Nonnull client, void *_Nonnull data,
   acc.rem_dk_total = missing_keys.size();
   acc.depot_key_requests.reset(new tek_sc_cm_data_depot_key[acc.rem_dk_total]);
   for (int i = 0; i < acc.rem_dk_total; ++i) {
-    auto &data_dk = acc.depot_key_requests[i];
-    const auto &item = missing_keys[i];
+    auto &data_dk{acc.depot_key_requests[i]};
+    const auto &item{missing_keys[i]};
     data_dk.app_id = item.first;
     data_dk.depot_id = item.second;
   }
@@ -414,7 +415,7 @@ static void cb_app_info(tek_sc_cm_client *_Nonnull client, void *_Nonnull data,
   //    refusing to process some of them, and timeouts. This will still happen
   //    even with such bursts, but nevertheless it's the faster way to get them
   {
-    const int burst_size = std::min(5, acc.rem_dk_total);
+    const int burst_size{std::min(5, acc.rem_dk_total)};
     acc.rem_dk_burst = burst_size;
     for (int i = 0; i < burst_size; ++i) {
       tek_sc_cm_get_depot_key(client,
@@ -442,8 +443,8 @@ app_err:
   access(read_write, 3)]]
 static void cb_access_tokens(tek_sc_cm_client *_Nonnull client,
                              void *_Nonnull data, void *_Nonnull user_data) {
-  auto &data_pics = *reinterpret_cast<tek_sc_cm_data_pics *>(data);
-  auto &acc = *reinterpret_cast<account *>(user_data);
+  auto &data_pics{*reinterpret_cast<tek_sc_cm_data_pics *>(data)};
+  auto &acc{*reinterpret_cast<account *>(user_data)};
   if (!tek_sc_err_success(&data_pics.result)) {
     std::println(std::cerr,
                  "Failed to get PICS access tokens for account {}'s apps:",
@@ -455,7 +456,8 @@ static void cb_access_tokens(tek_sc_cm_client *_Nonnull client,
     return;
   }
   for (auto &app :
-       std::span(data_pics.app_entries, data_pics.num_app_entries)) {
+       std::span{data_pics.app_entries,
+                 static_cast<std::size_t>(data_pics.num_app_entries)}) {
     if (tek_sc_err_success(&app.result)) {
       continue;
     }
@@ -490,8 +492,8 @@ static void cb_access_tokens(tek_sc_cm_client *_Nonnull client,
   access(read_write, 3)]]
 static void cb_package_info(tek_sc_cm_client *_Nonnull client,
                             void *_Nonnull data, void *_Nonnull user_data) {
-  auto &data_pics = *reinterpret_cast<tek_sc_cm_data_pics *>(data);
-  auto &acc = *reinterpret_cast<account *>(user_data);
+  auto &data_pics{*reinterpret_cast<tek_sc_cm_data_pics *>(data)};
+  auto &acc{*reinterpret_cast<account *>(user_data)};
   if (!tek_sc_err_success(&data_pics.result)) {
     std::println(std::cerr,
                  "Failed to get PICS info for account {}'s packages:",
@@ -503,8 +505,9 @@ static void cb_package_info(tek_sc_cm_client *_Nonnull client,
     return;
   }
   std::set<std::uint32_t> owned_app_ids;
-  const std::span packages(data_pics.package_entries,
-                           data_pics.num_package_entries);
+  const std::span packages{
+      data_pics.package_entries,
+      static_cast<std::size_t>(data_pics.num_package_entries)};
   for (const auto &package : packages) {
     if (tek_sc_err_success(&package.result)) {
       continue;
@@ -520,15 +523,15 @@ static void cb_package_info(tek_sc_cm_client *_Nonnull client,
     return;
   }
   for (const auto &package : packages) {
-    auto cur = reinterpret_cast<const char *>(package.data);
-    bin_vdf_node bvdf(cur, cur + package.data_size);
-    if (const auto depot_ids = bvdf.children.find("depotids");
+    auto cur{reinterpret_cast<const char *>(package.data)};
+    bin_vdf_node bvdf{cur, &cur[package.data_size]};
+    if (const auto depot_ids{bvdf.children.find("depotids")};
         depot_ids != bvdf.children.end()) {
       for (int depot_id : depot_ids->second->int_attrs | std::views::values) {
         acc.depot_ids.emplace(static_cast<std::uint32_t>(depot_id));
       };
     }
-    if (const auto app_ids = bvdf.children.find("appids");
+    if (const auto app_ids{bvdf.children.find("appids")};
         app_ids != bvdf.children.end()) {
       for (int app_id : app_ids->second->int_attrs | std::views::values) {
         owned_app_ids.emplace(static_cast<std::uint32_t>(app_id));
@@ -542,8 +545,8 @@ static void cb_package_info(tek_sc_cm_client *_Nonnull client,
   data_pics.app_entries = new tek_sc_cm_pics_entry[owned_app_ids.size()]();
   data_pics.num_app_entries = owned_app_ids.size();
   for (auto &&[id, entry] :
-       std::views::zip(owned_app_ids, std::span(data_pics.app_entries,
-                                                owned_app_ids.size()))) {
+       std::views::zip(owned_app_ids, std::span{data_pics.app_entries,
+                                                owned_app_ids.size()})) {
     entry.id = id;
   }
   tek_sc_cm_get_access_token(client, &data_pics, cb_access_tokens, 10000);
@@ -562,8 +565,8 @@ static void cb_package_info(tek_sc_cm_client *_Nonnull client,
   access(read_write, 3)]]
 static void cb_lics(tek_sc_cm_client *_Nonnull client, void *_Nonnull data,
                     void *_Nonnull user_data) {
-  const auto &data_lics = *reinterpret_cast<const tek_sc_cm_data_lics *>(data);
-  auto &acc = *reinterpret_cast<account *>(user_data);
+  const auto &data_lics{*reinterpret_cast<const tek_sc_cm_data_lics *>(data)};
+  auto &acc{*reinterpret_cast<account *>(user_data)};
   if (!tek_sc_err_success(&data_lics.result)) {
     std::println(std::cerr, "Failed to get licenses for account {}:",
                  acc.token_info.steam_id);
@@ -574,13 +577,13 @@ static void cb_lics(tek_sc_cm_client *_Nonnull client, void *_Nonnull data,
   if (!data_lics.num_entries) {
     return;
   }
-  auto &data_pics = *new tek_sc_cm_data_pics{
+  auto &data_pics{*new tek_sc_cm_data_pics{
       .app_entries = nullptr,
       .package_entries = new tek_sc_cm_pics_entry[data_lics.num_entries](),
       .num_app_entries = 0,
       .num_package_entries = data_lics.num_entries,
       .timeout_ms = 10000,
-      .result = {}};
+      .result = {}}};
   for (auto &&[lics_entry, pics_entry] :
        std::views::zip(std::span(data_lics.entries, data_lics.num_entries),
                        std::span(data_pics.package_entries,
@@ -603,8 +606,8 @@ static void cb_lics(tek_sc_cm_client *_Nonnull client, void *_Nonnull data,
   access(read_write, 3)]]
 static void cb_signed_in(tek_sc_cm_client *_Nonnull client, void *_Nonnull data,
                          void *_Nonnull user_data) {
-  const auto &res = *reinterpret_cast<const tek_sc_err *>(data);
-  auto &acc = *reinterpret_cast<account *>(user_data);
+  const auto &res{*reinterpret_cast<const tek_sc_err *>(data)};
+  auto &acc{*reinterpret_cast<account *>(user_data)};
   if (tek_sc_err_success(&res)) {
     tek_sc_cm_get_licenses(client, cb_lics, 10000);
     return;
@@ -642,12 +645,12 @@ static void renew(lws_sorted_usec_list_t *_Nonnull sul);
   access(read_write, 3)]]
 static void cb_token_renewed(tek_sc_cm_client *_Nonnull client,
                              void *_Nonnull data, void *_Nonnull user_data) {
-  const auto &data_renew =
-      *reinterpret_cast<const tek_sc_cm_data_renew_token *>(data);
-  auto &acc = *reinterpret_cast<account *>(user_data);
+  const auto &data_renew{
+      *reinterpret_cast<const tek_sc_cm_data_renew_token *>(data)};
+  auto &acc{*reinterpret_cast<account *>(user_data)};
   if (tek_sc_err_success(&data_renew.result)) {
     if (data_renew.new_token) {
-      const auto token_info = tek_sc_cm_parse_auth_token(data_renew.new_token);
+      const auto token_info{tek_sc_cm_parse_auth_token(data_renew.new_token)};
       if (token_info.steam_id) {
         acc.token = data_renew.new_token;
         acc.token_info = token_info;
@@ -678,7 +681,7 @@ static void cb_token_renewed(tek_sc_cm_client *_Nonnull client,
 }
 
 static void renew(lws_sorted_usec_list_t *sul) {
-  auto &acc = *reinterpret_cast<account *>(sul);
+  auto &acc{*reinterpret_cast<account *>(sul)};
   tek_sc_cm_auth_renew_token(acc.cm_client, acc.token.data(), cb_token_renewed,
                              5000);
 }
@@ -689,7 +692,7 @@ static void renew(lws_sorted_usec_list_t *sul) {
 
 void cb_connected(tek_sc_cm_client *client, void *data, void *user_data) {
   const auto &res = *reinterpret_cast<const tek_sc_err *>(data);
-  auto &acc = *reinterpret_cast<account *>(user_data);
+  auto &acc{*reinterpret_cast<account *>(user_data)};
   if (!tek_sc_err_success(&res)) {
     std::println(std::cerr, "Failed to connect to a Steam CM server:");
     print_err(res);
@@ -703,9 +706,9 @@ void cb_connected(tek_sc_cm_client *client, void *data, void *user_data) {
     tek_sc_cm_sign_in(client, acc.token.data(), cb_signed_in, 5000);
     return;
   }
-  if (const auto now = std::chrono::system_clock::to_time_t(
-          std::chrono::system_clock::now()),
-      day_bef_exp = acc.token_info.expires - 24 * 3600;
+  if (const auto now{std::chrono::system_clock::to_time_t(
+          std::chrono::system_clock::now())},
+      day_bef_exp{acc.token_info.expires - 24 * 3600};
       now < day_bef_exp) {
     // Schedule token renewal job
     acc.sul.cb = renew;
@@ -721,16 +724,21 @@ void cb_connected(tek_sc_cm_client *client, void *data, void *user_data) {
 }
 
 void cb_disconnected(tek_sc_cm_client *client, void *data, void *user_data) {
-  const auto &res = *reinterpret_cast<const tek_sc_err *>(data);
-  auto &acc = *reinterpret_cast<account *>(user_data);
+  const auto &res{*reinterpret_cast<const tek_sc_err *>(data)};
+  auto &acc{*reinterpret_cast<account *>(user_data)};
   if (state.num_cm_connections.fetch_sub(1, std::memory_order::relaxed) == 1) {
     ts3_os_futex_wake(&state.num_cm_connections);
+  }
+  if (acc.cm_client != client) {
+    // The client has been replaced by sign-in procedure, this one is no longer
+    //    needed
+    return;
   }
   if (!tek_sc_err_success(&res)) {
     std::println(std::cerr, "Abnormal disconnection from a Steam CM server:");
     print_err(res);
   }
-  if (remove_status cur_status = remove_status::pending_remove;
+  if (remove_status cur_status{remove_status::pending_remove};
       !acc.rem_status.compare_exchange_strong(cur_status, remove_status::remove,
                                               std::memory_order::relaxed,
                                               std::memory_order::relaxed) &&
