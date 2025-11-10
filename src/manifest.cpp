@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <charconv>
 #include <chrono>
+#include <cstddef>
 #include <cstdlib>
 #include <iostream>
 #include <print>
@@ -143,7 +144,11 @@ void update_manifest() {
       auto tmp_buf =
           std::make_unique_for_overwrite<unsigned char[]>(worst_size);
       state.manifest_deflate.size = worst_size;
+      #ifdef TEK_S3B_ZNG
+      std::size_t size;
+      #else // def TEK_S3B_ZNG
       uLongf size;
+      #endif // def TEK_S3B_ZNG else
       const auto res = compress2(tmp_buf.get(), &size, state.manifest.buf.get(),
                                  state.manifest.size, Z_BEST_COMPRESSION);
       state.manifest_deflate.size = size;
