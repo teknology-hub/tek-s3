@@ -36,7 +36,7 @@
 namespace tek::s3 {
 
 /// Maximum size of a response packet.
-constexpr std::size_t tx_size = 32768;
+constexpr std::size_t tx_size{32768};
 
 /// Global program status values.
 enum class status {

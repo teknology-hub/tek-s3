@@ -19,6 +19,7 @@
 #include "utils.h"
 
 #include <algorithm>
+#include <array>
 #include <charconv>
 #include <chrono>
 #include <cstddef>
@@ -50,13 +51,13 @@ namespace {
 
 #ifdef TEK_S3B_ZNG
 
-static constexpr auto &compressBound = ::zng_compressBound;
-static constexpr auto &compress2 = ::zng_compress2;
+static constexpr auto &compressBound{::zng_compressBound};
+static constexpr auto &compress2{::zng_compress2};
 
 #else // def TEK_S3B_ZNG
 
-static constexpr auto compressBound = ::compressBound;
-static constexpr auto compress2 = ::compress2;
+static constexpr auto compressBound{::compressBound};
+static constexpr auto compress2{::compress2};
 
 #endif // def TEK_S3B_ZNG else
 
@@ -68,7 +69,7 @@ static constexpr auto compress2 = ::compress2;
 ///    Program-defined message identifying which operation failed.
 static inline void print_os_err(tek_sc_os_errc errc,
                                 const std::string_view &&msg) {
-  const auto err_msg = ts3_os_get_err_msg(errc);
+  const auto err_msg{ts3_os_get_err_msg(errc)};
   std::println(std::cerr, "{}: ({}) {}", msg, errc, err_msg);
   std::free(err_msg);
 }
@@ -86,18 +87,18 @@ void update_manifest() {
     }
     // Serialize manifest into JSON
     {
-      rapidjson::Writer writer(buf);
+      rapidjson::Writer writer{buf};
       writer.StartObject();
-      std::string_view str = "apps";
+      std::string_view str{"apps"};
       writer.Key(str.data(), str.length());
       writer.StartObject();
       for (const auto &[app_id, app] : state.apps) {
-        char id_buf[10];
-        const auto res = std::to_chars(id_buf, &id_buf[sizeof id_buf], app_id);
+        std::array<char, 10> id_buf;
+        const auto res{std::to_chars(id_buf.begin(), id_buf.end(), app_id)};
         if (res.ec != std::errc{}) {
           continue;
         }
-        str = {id_buf, res.ptr};
+        str = {id_buf.data(), res.ptr};
         writer.Key(str.data(), str.length());
         writer.StartObject();
         str = "name";
@@ -106,7 +107,7 @@ void update_manifest() {
         str = "depots";
         writer.Key(str.data(), str.length());
         writer.StartArray();
-        for (const auto depot_id : app.depots | std::views::keys) {
+        for (auto depot_id : app.depots | std::views::keys) {
           writer.Uint(depot_id);
         }
         writer.EndArray();
@@ -117,17 +118,16 @@ void update_manifest() {
       writer.Key(str.data(), str.length());
       writer.StartObject();
       for (const auto &[depot_id, key] : state.depot_keys) {
-        char id_buf[10];
-        const auto res =
-            std::to_chars(id_buf, &id_buf[sizeof id_buf], depot_id);
+        std::array<char, 10> id_buf;
+        const auto res = std::to_chars(id_buf.begin(), id_buf.end(), depot_id);
         if (res.ec != std::errc{}) {
           continue;
         }
-        str = {id_buf, res.ptr};
+        str = {id_buf.data(), res.ptr};
         writer.Key(str.data(), str.length());
-        char b64_key[44];
-        ts3_u_base64_encode(key, sizeof key, b64_key);
-        writer.String(b64_key, sizeof b64_key);
+        std::array<char, 44> b64_key;
+        ts3_u_base64_encode(key, sizeof key, b64_key.data());
+        writer.String(b64_key.data(), b64_key.size());
       }
       writer.EndObject();
       writer.EndObject();
@@ -140,17 +140,16 @@ void update_manifest() {
     buf.Clear();
     // Deflate the manifest
     {
-      const auto worst_size = compressBound(state.manifest.size);
-      auto tmp_buf =
-          std::make_unique_for_overwrite<unsigned char[]>(worst_size);
+      const auto worst_size{compressBound(state.manifest.size)};
+      auto tmp_buf{std::make_unique_for_overwrite<unsigned char[]>(worst_size)};
       state.manifest_deflate.size = worst_size;
-      #ifdef TEK_S3B_ZNG
+#ifdef TEK_S3B_ZNG
       std::size_t size;
-      #else // def TEK_S3B_ZNG
+#else  // def TEK_S3B_ZNG
       uLongf size;
-      #endif // def TEK_S3B_ZNG else
-      const auto res = compress2(tmp_buf.get(), &size, state.manifest.buf.get(),
-                                 state.manifest.size, Z_BEST_COMPRESSION);
+#endif // def TEK_S3B_ZNG else
+      const auto res{compress2(tmp_buf.get(), &size, state.manifest.buf.get(),
+                               state.manifest.size, Z_BEST_COMPRESSION)};
       state.manifest_deflate.size = size;
       if (res != Z_OK) {
         state.manifest_deflate.buf.reset();
@@ -167,15 +166,14 @@ void update_manifest() {
 #ifdef TEK_S3B_BROTLI
     // Compress the manifest with brotli
     {
-      const auto worst_size =
-          BrotliEncoderMaxCompressedSize(state.manifest.size);
-      auto tmp_buf =
-          std::make_unique_for_overwrite<unsigned char[]>(worst_size);
+      const auto worst_size{
+          BrotliEncoderMaxCompressedSize(state.manifest.size)};
+      auto tmp_buf{std::make_unique_for_overwrite<unsigned char[]>(worst_size)};
       state.manifest_brotli.size = worst_size;
-      const int res = BrotliEncoderCompress(
+      const int res{BrotliEncoderCompress(
           BROTLI_MAX_QUALITY, BROTLI_MAX_WINDOW_BITS, BROTLI_MODE_TEXT,
           state.manifest.size, state.manifest.buf.get(),
-          &state.manifest_brotli.size, tmp_buf.get());
+          &state.manifest_brotli.size, tmp_buf.get())};
       if (res == BROTLI_FALSE) {
         state.manifest_brotli.buf.reset();
         state.manifest_brotli.size = 0;
@@ -192,9 +190,8 @@ void update_manifest() {
 #ifdef TEK_S3B_ZSTD
     // Compress the manifest with zstd
     {
-      const auto worst_size = ZSTD_compressBound(state.manifest.size);
-      auto tmp_buf =
-          std::make_unique_for_overwrite<unsigned char[]>(worst_size);
+      const auto worst_size{ZSTD_compressBound(state.manifest.size)};
+      auto tmp_buf{std::make_unique_for_overwrite<unsigned char[]>(worst_size)};
       state.manifest_zstd.size =
           ZSTD_compress(tmp_buf.get(), worst_size, state.manifest.buf.get(),
                         state.manifest.size, ZSTD_maxCLevel());
@@ -216,9 +213,9 @@ void update_manifest() {
   if (state.state_dirty) {
     state.state_dirty = false;
     // Serialize the state into JSON
-    rapidjson::Writer writer(buf);
+    rapidjson::Writer writer{buf};
     writer.StartObject();
-    std::string_view str = "timestamp";
+    std::string_view str{"timestamp"};
     writer.Key(str.data(), str.length());
     writer.Uint64(state.timestamp);
     str = "accounts";
@@ -234,15 +231,15 @@ void update_manifest() {
     writer.Key(str.data(), str.length());
     writer.StartObject();
     for (const auto &[app_id, app] : state.apps) {
-      char id_buf[10];
-      const auto res = std::to_chars(id_buf, &id_buf[sizeof id_buf], app_id);
+      std::array<char, 10> id_buf;
+      const auto res{std::to_chars(id_buf.begin(), id_buf.end(), app_id)};
       if (res.ec != std::errc{}) {
         continue;
       }
-      str = {id_buf, res.ptr};
+      str = {id_buf.data(), res.ptr};
       writer.Key(str.data(), str.length());
       writer.StartArray();
-      for (const auto depot_id : app.depots | std::views::keys) {
+      for (auto depot_id : app.depots | std::views::keys) {
         writer.Uint(depot_id);
       }
       writer.EndArray();
@@ -252,43 +249,43 @@ void update_manifest() {
     writer.Key(str.data(), str.length());
     writer.StartObject();
     for (const auto &[depot_id, key] : state.depot_keys) {
-      char id_buf[10];
-      const auto res = std::to_chars(id_buf, &id_buf[sizeof id_buf], depot_id);
+      std::array<char, 10> id_buf;
+      const auto res{std::to_chars(id_buf.begin(), id_buf.end(), depot_id)};
       if (res.ec != std::errc{}) {
         continue;
       }
-      str = {id_buf, res.ptr};
+      str = {id_buf.data(), res.ptr};
       writer.Key(str.data(), str.length());
-      char b64_key[44];
-      ts3_u_base64_encode(key, sizeof key, b64_key);
-      writer.String(b64_key, sizeof b64_key);
+      std::array<char, 44> b64_key;
+      ts3_u_base64_encode(key, sizeof key, b64_key.data());
+      writer.String(b64_key.data(), b64_key.size());
     }
     writer.EndObject();
     writer.EndObject();
     // Write serialized JSON into the file
-    std::unique_ptr<tek_sc_os_char[], decltype(&std::free)> state_dir(
-        ts3_os_get_state_dir(), std::free);
+    std::unique_ptr<tek_sc_os_char[], decltype(&std::free)> state_dir{
+        ts3_os_get_state_dir(), std::free};
     if (!state_dir) {
       std::println(std::cerr, "Cannot save state: state directory not found");
       return;
     }
-    os_handle state_dir_handle(ts3_os_dir_create(state_dir.get()));
+    os_handle state_dir_handle{ts3_os_dir_create(state_dir.get())};
     if (!state_dir_handle) {
       print_os_err(ts3_os_get_last_error(),
                    "Cannot save state; failed to open state directory");
       return;
     }
     state_dir.reset();
-    os_handle ts3_dir_handle(
-        ts3_os_dir_create_at(state_dir_handle.value, TEK_SC_OS_STR("tek-s3")));
+    os_handle ts3_dir_handle{
+        ts3_os_dir_create_at(state_dir_handle.value, TEK_SC_OS_STR("tek-s3"))};
     if (!ts3_dir_handle) {
       print_os_err(ts3_os_get_last_error(),
                    "Cannot save state; failed to open tek-s3 subdirectory");
       return;
     }
     state_dir_handle.close();
-    os_handle state_file_handle(ts3_os_file_create_at(
-        ts3_dir_handle.value, TEK_SC_OS_STR("state.json")));
+    os_handle state_file_handle{ts3_os_file_create_at(
+        ts3_dir_handle.value, TEK_SC_OS_STR("state.json"))};
     if (!state_file_handle) {
       print_os_err(ts3_os_get_last_error(),
                    "Cannot save state; failed to open state file");

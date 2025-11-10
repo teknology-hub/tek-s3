@@ -26,6 +26,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <iterator>
 #include <libwebsockets.h>
 #include <memory>
 #include <mutex>
@@ -34,7 +35,6 @@
 #include <rapidjson/stringbuffer.h>
 #include <rapidjson/writer.h>
 #include <set>
-#include <span>
 #include <string_view>
 #include <tek-steamclient/cm.h>
 #include <tek-steamclient/error.h>
@@ -58,20 +58,20 @@ namespace {
   access(read_write, 3)]]
 static void cb_auth(tek_sc_cm_client *_Nonnull client, void *_Nonnull data,
                     void *_Nonnull user_data) {
-  const auto &data_auth =
-      *reinterpret_cast<const tek_sc_cm_data_auth_polling *>(data);
-  auto &ctx = *reinterpret_cast<signin_ctx *>(user_data);
-  const std::scoped_lock lock(ctx.mtx);
+  const auto &data_auth{
+      *reinterpret_cast<const tek_sc_cm_data_auth_polling *>(data)};
+  auto &ctx{*reinterpret_cast<signin_ctx *>(user_data)};
+  const std::scoped_lock lock{ctx.mtx};
   switch (data_auth.status) {
   case TEK_SC_CM_AUTH_STATUS_completed: {
     rapidjson::StringBuffer buf;
-    rapidjson::Writer writer(buf);
+    rapidjson::Writer writer{buf};
     writer.StartObject();
     if (tek_sc_err_success(&data_auth.result)) {
       ctx.token = data_auth.token;
       ctx.state = signin_state::done;
-      const auto token_info = tek_sc_cm_parse_auth_token(data_auth.token);
-      std::string_view str = "renewable";
+      const auto token_info{tek_sc_cm_parse_auth_token(data_auth.token)};
+      std::string_view str{"renewable"};
       writer.Key(str.data(), str.length());
       writer.Bool(token_info.renewable);
       if (!token_info.renewable) {
@@ -80,7 +80,7 @@ static void cb_auth(tek_sc_cm_client *_Nonnull client, void *_Nonnull data,
         writer.Uint64(static_cast<std::uint64_t>(token_info.expires));
       }
     } else { // if (tek_sc_err_success(&data_auth.result))
-      std::string_view str = "error";
+      std::string_view str{"error"};
       writer.Key(str.data(), str.length());
       writer.StartObject();
       str = "type";
@@ -109,9 +109,9 @@ static void cb_auth(tek_sc_cm_client *_Nonnull client, void *_Nonnull data,
   } // case TEK_SC_CM_AUTH_STATUS_completed
   case TEK_SC_CM_AUTH_STATUS_new_url: {
     rapidjson::StringBuffer buf;
-    rapidjson::Writer writer(buf);
+    rapidjson::Writer writer{buf};
     writer.StartObject();
-    std::string_view str = "url";
+    std::string_view str{"url"};
     writer.Key(str.data(), str.length());
     str = data_auth.url;
     writer.String(str.data(), str.length());
@@ -127,9 +127,9 @@ static void cb_auth(tek_sc_cm_client *_Nonnull client, void *_Nonnull data,
   }
   case TEK_SC_CM_AUTH_STATUS_awaiting_confirmation: {
     rapidjson::StringBuffer buf;
-    rapidjson::Writer writer(buf);
+    rapidjson::Writer writer{buf};
     writer.StartObject();
-    std::string_view str = "confirmations";
+    std::string_view str{"confirmations"};
     writer.Key(str.data(), str.length());
     writer.StartArray();
     if (data_auth.confirmation_types &
@@ -172,16 +172,16 @@ static void cb_auth(tek_sc_cm_client *_Nonnull client, void *_Nonnull data,
   access(read_write, 3)]]
 static void cb_auth_connected(tek_sc_cm_client *_Nonnull client,
                               void *_Nonnull data, void *_Nonnull user_data) {
-  auto &ctx = *reinterpret_cast<signin_ctx *>(user_data);
-  if (const auto &res = *reinterpret_cast<const tek_sc_err *>(data);
+  auto &ctx{*reinterpret_cast<signin_ctx *>(user_data)};
+  if (const auto &res{*reinterpret_cast<const tek_sc_err *>(data)};
       !tek_sc_err_success(&res)) {
-    const std::scoped_lock lock(ctx.mtx);
+    const std::scoped_lock lock{ctx.mtx};
     if (ctx.state != signin_state::done) {
       ctx.state = signin_state::disonnected;
       rapidjson::StringBuffer buf;
-      rapidjson::Writer writer(buf);
+      rapidjson::Writer writer{buf};
       writer.StartObject();
-      std::string_view str = "error";
+      std::string_view str{"error"};
       writer.Key(str.data(), str.length());
       writer.StartObject();
       str = "type";
@@ -207,17 +207,15 @@ static void cb_auth_connected(tek_sc_cm_client *_Nonnull client,
     }
     return;
   } // if (!tek_sc_err_success(&res))
-  constexpr std::string_view dev_name_pfx = "tek-s3 " TEK_S3_VERSION " @ ";
-  static std::array<char, dev_name_pfx.length() + 32> dev_name =
+  constexpr std::string_view dev_name_pfx{"tek-s3 " TEK_S3_VERSION " @ "};
+  static std::array<char, dev_name_pfx.length() + 32> dev_name{
       [&dev_name_pfx]() {
         std::array<char, dev_name.size()> buf;
-        std::ranges::copy(dev_name_pfx, buf.data());
-        const std::span<char, buf.size() - dev_name_pfx.length()> hostname(
-            &buf[dev_name_pfx.length()], hostname.extent);
-        ts3_os_get_hostname(hostname.data(), hostname.size());
+        const auto hostname{std::ranges::copy(dev_name_pfx, buf.data()).out};
+        ts3_os_get_hostname(hostname, std::distance(hostname, buf.end()));
         return buf;
-      }();
-  const std::scoped_lock lock(ctx.mtx);
+      }()};
+  const std::scoped_lock lock{ctx.mtx};
   switch (ctx.type) {
   case auth_type::credentials:
     tek_sc_cm_auth_credentials(client, dev_name.data(), ctx.account_name.data(),
@@ -235,19 +233,19 @@ static void cb_auth_connected(tek_sc_cm_client *_Nonnull client,
 [[using gnu: nonnull(3), access(read_write, 3)]]
 static void cb_auth_disconnected(tek_sc_cm_client *, void *,
                                  void *_Nonnull user_data) {
-  auto &ctx = *reinterpret_cast<signin_ctx *>(user_data);
-  const std::scoped_lock lock(ctx.mtx);
+  auto &ctx{*reinterpret_cast<signin_ctx *>(user_data)};
+  const std::scoped_lock lock{ctx.mtx};
   if (ctx.state == signin_state::done) {
     if (!ctx.token.empty()) {
       state.manifest_mtx.lock();
-      auto cm_client = ctx.cm_client.release();
-      const auto token_info = tek_sc_cm_parse_auth_token(ctx.token.data());
-      const auto [it, emplaced] = state.accounts.try_emplace(
+      auto cm_client{ctx.cm_client.release()};
+      const auto token_info{tek_sc_cm_parse_auth_token(ctx.token.data())};
+      const auto [it, emplaced]{state.accounts.try_emplace(
           token_info.steam_id, lws_sorted_usec_list_t{}, cm_client,
           std::move(ctx.token), token_info, renew_status::not_scheduled, 0, 0,
           remove_status::none, std::unique_ptr<tek_sc_cm_data_depot_key[]>{},
-          std::set<std::uint32_t>{}, false);
-      auto &acc = it->second;
+          std::set<std::uint32_t>{}, false)};
+      auto &acc{it->second};
       if (emplaced) {
         // New account added
         tek_sc_cm_set_user_data(cm_client, &acc);
@@ -287,7 +285,7 @@ static void cb_auth_disconnected(tek_sc_cm_client *, void *,
 //===-- Internal function -------------------------------------------------===//
 
 int signin_process_msg(signin_ctx &ctx, char *msg, std::size_t msg_size) {
-  const std::scoped_lock lock(ctx.mtx);
+  const std::scoped_lock lock{ctx.mtx};
   if (ctx.state == signin_state::awaiting_cm_response) {
     return 1;
   }
@@ -300,21 +298,21 @@ int signin_process_msg(signin_ctx &ctx, char *msg, std::size_t msg_size) {
   }
   switch (ctx.state) {
   case signin_state::awaiting_init: {
-    const auto type = doc.FindMember("type");
+    const auto type{doc.FindMember("type")};
     if (type == doc.MemberEnd() || !type->value.IsString()) {
       return 1;
     }
-    const std::string_view type_view(type->value.GetString(),
-                                     type->value.GetStringLength());
+    const std::string_view type_view{type->value.GetString(),
+                                     type->value.GetStringLength()};
     if (type_view == "credentials") {
       ctx.type = auth_type::credentials;
-      const auto account_name = doc.FindMember("account_name");
+      const auto account_name{doc.FindMember("account_name")};
       if (account_name == doc.MemberEnd() || !account_name->value.IsString()) {
         return 1;
       }
       ctx.account_name = {account_name->value.GetString(),
                           account_name->value.GetStringLength()};
-      const auto password = doc.FindMember("password");
+      const auto password{doc.FindMember("password")};
       if (password == doc.MemberEnd() || !password->value.IsString()) {
         return 1;
       }
@@ -336,12 +334,12 @@ int signin_process_msg(signin_ctx &ctx, char *msg, std::size_t msg_size) {
     return 0;
   }
   case signin_state::awaiting_confirmation: {
-    const auto type = doc.FindMember("type");
+    const auto type{doc.FindMember("type")};
     if (type == doc.MemberEnd() || !type->value.IsString()) {
       return 1;
     }
-    const std::string_view type_view(type->value.GetString(),
-                                     type->value.GetStringLength());
+    const std::string_view type_view{type->value.GetString(),
+                                     type->value.GetStringLength()};
     tek_sc_cm_auth_confirmation_type conf_type;
     if (type_view == "guard_code") {
       conf_type = TEK_SC_CM_AUTH_CONFIRMATION_TYPE_guard_code;
@@ -350,7 +348,7 @@ int signin_process_msg(signin_ctx &ctx, char *msg, std::size_t msg_size) {
     } else {
       return 1;
     }
-    const auto code = doc.FindMember("code");
+    const auto code{doc.FindMember("code")};
     if (code == doc.MemberEnd() || !code->value.IsString()) {
       return 1;
     }

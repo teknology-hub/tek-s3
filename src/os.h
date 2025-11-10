@@ -250,7 +250,7 @@ namespace tek::s3 {
 struct [[gnu::visibility("internal")]] os_handle {
   tek_sc_os_handle value;
 
-  constexpr os_handle(tek_sc_os_handle handle) noexcept : value(handle) {}
+  constexpr os_handle(tek_sc_os_handle handle) noexcept : value{handle} {}
   constexpr ~os_handle() noexcept { close(); }
 
   constexpr operator bool() const noexcept {

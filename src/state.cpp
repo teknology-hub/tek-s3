@@ -90,7 +90,7 @@ static constexpr lws_http_mount mount{.mount_next = nullptr,
 ///    Program-defined message identifying which operation failed.
 static inline void print_os_err(tek_sc_os_errc errc,
                                 const std::string_view &&msg) {
-  const auto err_msg = ts3_os_get_err_msg(errc);
+  const auto err_msg{ts3_os_get_err_msg(errc)};
   std::println(std::cerr, "{}: ({}) {}", msg, errc, err_msg);
   std::free(err_msg);
 }
@@ -104,26 +104,26 @@ extern "C" {
 bool ts3_init(void) {
   std::println("tek-s3 " TEK_S3_VERSION);
   // Initialize tek-steamclient library context
-  std::unique_ptr<tek_sc_lib_ctx, decltype(&tek_sc_lib_cleanup)> tek_sc_ctx(
-      tek_sc_lib_init(true, true), tek_sc_lib_cleanup);
+  std::unique_ptr<tek_sc_lib_ctx, decltype(&tek_sc_lib_cleanup)> tek_sc_ctx{
+      tek_sc_lib_init(true, true), tek_sc_lib_cleanup};
   if (!tek_sc_ctx) {
     std::println(std::cerr, "tek_sc_lib_init failed");
     return false;
   }
   // Load state
   {
-    const auto state_dir = ts3_os_get_state_dir();
+    const auto state_dir{ts3_os_get_state_dir()};
     if (!state_dir) {
       std::println("State directory not found, initializing new state");
       goto skip_state_file;
     }
-    auto state_file_path = std::basic_string<tek_sc_os_char>(state_dir).append(
+    auto state_file_path{std::basic_string<tek_sc_os_char>(state_dir).append(
         TEK_SC_OS_STR("" TS3_OS_PATH_SEP_CHAR_STR
-                      "tek-s3" TS3_OS_PATH_SEP_CHAR_STR "state.json"));
+                      "tek-s3" TS3_OS_PATH_SEP_CHAR_STR "state.json"))};
     std::free(state_dir);
-    os_handle state_file_handle(ts3_os_file_open(state_file_path.data()));
+    os_handle state_file_handle{ts3_os_file_open(state_file_path.data())};
     if (!state_file_handle) {
-      if (const auto errc = ts3_os_get_last_error();
+      if (const auto errc{ts3_os_get_last_error()};
           errc != TS3_OS_ERR_FILE_NOT_FOUND) {
         print_os_err(errc, "Failed to open state file");
         return false;
@@ -132,13 +132,13 @@ bool ts3_init(void) {
       goto skip_state_file;
     }
     state_file_path = {};
-    const auto state_file_size = ts3_os_file_get_size(state_file_handle.value);
+    const auto state_file_size{ts3_os_file_get_size(state_file_handle.value)};
     if (state_file_size == std::numeric_limits<std::size_t>::max()) {
       print_os_err(ts3_os_get_last_error(), "Failed to get state file size");
       return false;
     }
-    const auto state_file_data =
-        std::make_unique_for_overwrite<char[]>(state_file_size + 1);
+    const auto state_file_data{
+        std::make_unique_for_overwrite<char[]>(state_file_size + 1)};
     if (!ts3_os_file_read(state_file_handle.value, state_file_data.get(),
                           state_file_size)) {
       print_os_err(ts3_os_get_last_error(), "Failed to read state file");
@@ -153,20 +153,20 @@ bool ts3_init(void) {
       std::println(std::cerr, "Failed to parse state file's JSON");
       return false;
     }
-    if (const auto timestamp = doc.FindMember("timestamp");
+    if (const auto timestamp{doc.FindMember("timestamp")};
         timestamp != doc.MemberEnd() && timestamp->value.IsUint64()) {
       state.timestamp = static_cast<std::time_t>(timestamp->value.GetUint64());
     }
     if (const auto accounts = doc.FindMember("accounts");
         accounts != doc.MemberEnd() && accounts->value.IsArray()) {
-      for (const auto now = std::chrono::system_clock::to_time_t(
-               std::chrono::system_clock::now());
+      for (const auto now{std::chrono::system_clock::to_time_t(
+               std::chrono::system_clock::now())};
            const auto &acc : accounts->value.GetArray()) {
         if (!acc.IsString()) {
           continue;
         }
-        const std::string token(acc.GetString(), acc.GetStringLength());
-        const auto token_info = tek_sc_cm_parse_auth_token(token.data());
+        const std::string token{acc.GetString(), acc.GetStringLength()};
+        const auto token_info{tek_sc_cm_parse_auth_token(token.data())};
         if (!token_info.steam_id) {
           std::println(std::cerr, "Auth token \"{}\" is invalid; skipping it",
                        token);
@@ -185,19 +185,19 @@ bool ts3_init(void) {
             std::set<std::uint32_t>{}, false);
       }
     }
-    if (const auto apps = doc.FindMember("apps");
+    if (const auto apps{doc.FindMember("apps")};
         apps != doc.MemberEnd() && apps->value.IsObject()) {
       for (const auto &[id, depots] : apps->value.GetObject()) {
         if (!depots.IsArray()) {
           continue;
         }
         std::uint32_t app_id;
-        if (const std::string_view view(id.GetString(), id.GetStringLength());
+        if (const std::string_view view{id.GetString(), id.GetStringLength()};
             std::from_chars(view.begin(), view.end(), app_id).ec !=
             std::errc{}) {
           continue;
         }
-        for (auto &app = state.apps.try_emplace(app_id).first->second;
+        for (auto &app{state.apps.try_emplace(app_id).first->second};
              const auto &depot_id : depots.GetArray()) {
           if (!depot_id.IsUint()) {
             continue;
@@ -207,11 +207,11 @@ bool ts3_init(void) {
         }
       }
     }
-    if (const auto depot_keys = doc.FindMember("depot_keys");
+    if (const auto depot_keys{doc.FindMember("depot_keys")};
         depot_keys != doc.MemberEnd() && depot_keys->value.IsObject()) {
       for (const auto &[id, b64_key] : depot_keys->value.GetObject()) {
         std::uint32_t depot_id;
-        if (const std::string_view view(id.GetString(), id.GetStringLength());
+        if (const std::string_view view{id.GetString(), id.GetStringLength()};
             std::from_chars(view.begin(), view.end(), depot_id).ec !=
             std::errc{}) {
           continue;
@@ -228,20 +228,20 @@ skip_state_file:
   // Load settings
   std::string endpoint;
   {
-    const auto config_dir = ts3_os_get_config_dir();
+    const auto config_dir{ts3_os_get_config_dir()};
     if (!config_dir) {
       std::println("Config directory not found, using defaults");
       goto skip_settings_file;
     }
-    auto settings_file_path =
+    auto settings_file_path{
         std::basic_string<tek_sc_os_char>(config_dir)
             .append(TEK_SC_OS_STR("" TS3_OS_PATH_SEP_CHAR_STR
                                   "tek-s3" TS3_OS_PATH_SEP_CHAR_STR
-                                  "settings.json"));
+                                  "settings.json"))};
     std::free(config_dir);
-    os_handle settings_file_handle(ts3_os_file_open(settings_file_path.data()));
+    os_handle settings_file_handle{ts3_os_file_open(settings_file_path.data())};
     if (!settings_file_handle) {
-      if (const auto errc = ts3_os_get_last_error();
+      if (const auto errc{ts3_os_get_last_error()};
           errc != TS3_OS_ERR_FILE_NOT_FOUND) {
         print_os_err(errc, "Failed to open settings file");
         return false;
@@ -250,14 +250,14 @@ skip_state_file:
       goto skip_settings_file;
     }
     settings_file_path = {};
-    const auto settings_file_size =
-        ts3_os_file_get_size(settings_file_handle.value);
+    const auto settings_file_size{
+        ts3_os_file_get_size(settings_file_handle.value)};
     if (settings_file_size == std::numeric_limits<std::size_t>::max()) {
       print_os_err(ts3_os_get_last_error(), "Failed to get settings file size");
       return false;
     }
-    const auto settings_file_data =
-        std::make_unique_for_overwrite<char[]>(settings_file_size + 1);
+    const auto settings_file_data{
+        std::make_unique_for_overwrite<char[]>(settings_file_size + 1)};
     if (!ts3_os_file_read(settings_file_handle.value, settings_file_data.get(),
                           settings_file_size)) {
       print_os_err(ts3_os_get_last_error(), "Failed to read settings file");
@@ -273,7 +273,7 @@ skip_state_file:
       std::println(std::cerr, "Failed to parse settings file's JSON");
       return false;
     }
-    const auto listen_endpoint = doc.FindMember("listen_endpoint");
+    const auto listen_endpoint{doc.FindMember("listen_endpoint")};
     if (listen_endpoint != doc.MemberEnd() &&
         listen_endpoint->value.IsString()) {
       endpoint = {listen_endpoint->value.GetString(),
@@ -285,7 +285,7 @@ skip_settings_file:
   const char *iface;
   int port;
 #ifdef __linux__
-  const char *uds_perms = nullptr;
+  const char *uds_perms{};
 #endif // __linux__
   if (endpoint.empty()) {
     iface = "127.0.0.1";
@@ -299,15 +299,15 @@ skip_settings_file:
     } else
 #endif // __linux__
     {
-      const auto colon_pos = endpoint.rfind(':');
+      const auto colon_pos{endpoint.rfind(':')};
       if (colon_pos == std::string::npos) {
         std::println(std::cerr, "Invalid listen_endpoint value: ':' not found");
         return false;
       }
       endpoint[colon_pos] = '\0';
       iface = endpoint.data();
-      if (const std::string_view port_view(endpoint.begin() + colon_pos + 1,
-                                           endpoint.end());
+      if (const std::string_view port_view{endpoint.begin() + colon_pos + 1,
+                                           endpoint.end()};
           std::from_chars(port_view.begin(), port_view.end(), port).ec !=
           std::errc{}) {
         std::println(std::cerr,
@@ -323,8 +323,8 @@ skip_settings_file:
     }
   }
   // Create libwebsockets context
-  std::unique_ptr<lws_context, decltype(&lws_context_destroy)> lws_ctx(
-      nullptr, lws_context_destroy);
+  std::unique_ptr<lws_context, decltype(&lws_context_destroy)> lws_ctx{
+      nullptr, lws_context_destroy};
   {
     lws_context_creation_info info{};
     info.iface = iface;
@@ -357,8 +357,8 @@ skip_settings_file:
     }
   } // lws_ctx initialization scope
   // Create CM client instances
-  for (auto it = state.accounts.begin(); it != state.accounts.end(); ++it) {
-    auto &acc = it->second;
+  for (auto it{state.accounts.begin()}; it != state.accounts.end(); ++it) {
+    auto &acc{it->second};
     acc.cm_client = tek_sc_cm_client_create(tek_sc_ctx.get(), &acc);
     if (!acc.cm_client) {
       for (auto cm_client : std::ranges::subrange(state.accounts.begin(), it) |
@@ -400,8 +400,8 @@ int ts3_cleanup(void) {
     tek_sc_cm_client_destroy(cm_client);
   }
   for (;;) {
-    const auto cur_num_conns =
-        state.num_cm_connections.load(std::memory_order::relaxed);
+    const auto cur_num_conns{
+        state.num_cm_connections.load(std::memory_order::relaxed)};
     if (!cur_num_conns) {
       break;
     }
