@@ -130,6 +130,66 @@ static void print_err(const tek_sc_err &err) noexcept {
   tek_sc_err_release_msgs(&msgs);
 }
 
+/// Check if specified tek-steamclient error indicates that auth token has
+///    expired or been revoked, and if it does, schedule the account for
+///    removal.
+///
+/// @param [in] err
+///    tek-steamclient error to check.
+/// @param [in, out] acc
+///    Account entry to remove if auth token has been invalidated.
+/// @return Value indicating whether @p acc has been scheduled for removal.
+static bool check_token_err(const tek_sc_err &err, account &acc) {
+  switch (err.type) {
+  case TEK_SC_ERR_TYPE_sub:
+    if (err.auxiliary == TEK_SC_ERRC_cm_token_expired) {
+      std::println("Auth token for account {} has expired, removing it",
+                   acc.token_info.steam_id);
+      break;
+    }
+    return false;
+  case TEK_SC_ERR_TYPE_steam_cm:
+    switch (err.auxiliary) {
+    case TEK_SC_CM_ERESULT_access_denied:
+    case TEK_SC_CM_ERESULT_invalid_signature:
+      std::println("Auth token for account {} has been revoked, removing it",
+                   acc.token_info.steam_id);
+      break;
+    default:
+      return false;
+    }
+  default:
+    return false;
+  }
+  std::unique_lock lock{state.manifest_mtx};
+  acc.rem_status.store(remove_status::pending_remove,
+                       std::memory_order::relaxed);
+  state.state_dirty = true;
+  if (state.cur_status.load(std::memory_order::relaxed) == status::running) {
+    for (auto &app : state.apps | std::views::values) {
+      for (auto &depot : app.depots | std::views::values) {
+        if (std::erase(depot.accs, &acc)) {
+          depot.next_acc = depot.accs.cbegin();
+        }
+      }
+      if (std::erase_if(app.depots, [](const auto &pair) {
+            return pair.second.accs.empty();
+          })) {
+        state.manifest_dirty = true;
+      }
+    }
+    if (std::erase_if(state.apps, [](const auto &app) {
+          return app.second.depots.empty();
+        })) {
+      state.manifest_dirty = true;
+    }
+    update_manifest();
+  }
+  lock.unlock();
+  lws_cancel_service(state.lws_ctx);
+  return true;
+}
+
 static void sync_manifest() {
   const std::scoped_lock lock(state.manifest_mtx);
   for (auto &app : state.apps | std::views::values) {
@@ -549,39 +609,9 @@ static void cb_signed_in(tek_sc_cm_client *_Nonnull client, void *_Nonnull data,
     tek_sc_cm_get_licenses(client, cb_lics, 10000);
     return;
   }
-  if (res.type == TEK_SC_ERR_TYPE_steam_cm &&
-      (res.auxiliary == TEK_SC_CM_ERESULT_access_denied ||
-       res.auxiliary == TEK_SC_CM_ERESULT_invalid_signature)) {
-    std::println("Auth token for account {} has been invalidated, removing it",
-                 acc.token_info.steam_id);
-    std::unique_lock lock(state.manifest_mtx);
-    acc.rem_status.store(remove_status::pending_remove,
-                         std::memory_order::relaxed);
-    state.state_dirty = true;
-    if (state.cur_status.load(std::memory_order::relaxed) == status::running) {
-      for (auto &app : state.apps | std::views::values) {
-        for (auto &depot : app.depots | std::views::values) {
-          if (std::erase(depot.accs, &acc)) {
-            depot.next_acc = depot.accs.cbegin();
-          }
-        }
-        if (std::erase_if(app.depots, [](const auto &pair) {
-              return pair.second.accs.empty();
-            })) {
-          state.manifest_dirty = true;
-        }
-      }
-      if (std::erase_if(state.apps, [](const auto &app) {
-            return app.second.depots.empty();
-          })) {
-        state.manifest_dirty = true;
-      }
-      update_manifest();
-    }
-    lock.unlock();
-    lws_cancel_service(state.lws_ctx);
-  } else if (res.type != TEK_SC_ERR_TYPE_steam_cm ||
-             res.auxiliary != TEK_SC_CM_ERESULT_service_unavailable) {
+  if (!check_token_err(res, acc) &&
+      (res.type != TEK_SC_ERR_TYPE_steam_cm ||
+       res.auxiliary != TEK_SC_CM_ERESULT_service_unavailable)) {
     std::println(std::cerr,
                  "Failed to sign into account {}:", acc.token_info.steam_id);
     print_err(res);
@@ -628,7 +658,7 @@ static void cb_token_renewed(tek_sc_cm_client *_Nonnull client,
         std::println("Renewed auth token for account {}", token_info.steam_id);
         // Schedule the next renewal job
         acc.sul.cb = renew;
-        acc.sul.us = lws_now_usecs() + (acc.token_info.expires - 7 * 24 * 3600 -
+        acc.sul.us = lws_now_usecs() + (acc.token_info.expires - 24 * 3600 -
                                         std::chrono::system_clock::to_time_t(
                                             std::chrono::system_clock::now())) *
                                            LWS_USEC_PER_SEC;
@@ -636,12 +666,15 @@ static void cb_token_renewed(tek_sc_cm_client *_Nonnull client,
         lws_cancel_service(state.lws_ctx);
       }
     }
+    tek_sc_cm_sign_in(client, acc.token.data(), cb_signed_in, 5000);
   } else {
-    std::println(std::cerr, "Failed to renew token for account {}:",
-                 acc.token_info.steam_id);
-    print_err(data_renew.result);
+    if (!check_token_err(data_renew.result, acc)) {
+      std::println(std::cerr, "Failed to renew token for account {}:",
+                   acc.token_info.steam_id);
+      print_err(data_renew.result);
+    }
+    tek_sc_cm_disconnect(client);
   }
-  tek_sc_cm_disconnect(client);
 }
 
 static void renew(lws_sorted_usec_list_t *sul) {
@@ -672,16 +705,16 @@ void cb_connected(tek_sc_cm_client *client, void *data, void *user_data) {
   }
   if (const auto now = std::chrono::system_clock::to_time_t(
           std::chrono::system_clock::now()),
-      week_bef_exp = acc.token_info.expires - 7 * 24 * 3600;
-      now < week_bef_exp) {
+      day_bef_exp = acc.token_info.expires - 24 * 3600;
+      now < day_bef_exp) {
     // Schedule token renewal job
     acc.sul.cb = renew;
-    acc.sul.us = lws_now_usecs() + (week_bef_exp - now) * LWS_USEC_PER_SEC;
+    acc.sul.us = lws_now_usecs() + (day_bef_exp - now) * LWS_USEC_PER_SEC;
     acc.ren_status = renew_status::pending_schedule;
     lws_cancel_service(state.lws_ctx);
     tek_sc_cm_sign_in(client, acc.token.data(), cb_signed_in, 5000);
   } else {
-    // Less than a week left until token expiration, try renewing it
+    // Less than a day left until token expiration, try renewing it
     tek_sc_cm_auth_renew_token(client, acc.token.data(), cb_token_renewed,
                                5000);
   }
