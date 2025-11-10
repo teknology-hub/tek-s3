@@ -19,12 +19,12 @@ KEYWORDS="amd64"
 IUSE="+brotli systemd zlib-ng +zstd"
 
 COMMON_DEPEND="
-	games-util/tek-steamclient
+	games-util/tek-steamclient:2
 	net-libs/libwebsockets[client,extensions,ssl]
 	brotli? ( app-arch/brotli )
 	systemd? ( sys-apps/systemd )
 	zlib-ng? ( sys-libs/zlib-ng )
-	!zlib-ng? ( sys-libs/zlib )
+	!zlib-ng? ( virtual/zlib )
 	zstd? ( app-arch/zstd )
 "
 DEPEND="
