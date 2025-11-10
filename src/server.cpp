@@ -649,11 +649,11 @@ constexpr lws_protocols protocol{.name = "tek-s3",
                                  .user = nullptr,
                                  .tx_packet_size = tx_size};
 
+} // namespace tek::s3
+
 //===-- Internal function -------------------------------------------------===//
 
 extern "C" void ts3_run(void) {
-  while (!lws_service(state.lws_ctx, 0))
+  while (!lws_service(tek::s3::state.lws_ctx, 0))
     ;
 }
-
-} // namespace tek::s3
