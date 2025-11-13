@@ -158,6 +158,7 @@ static bool check_token_err(const tek_sc_err &err, account &acc) {
     default:
       return false;
     }
+    break;
   default:
     return false;
   }
