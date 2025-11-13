@@ -36,9 +36,9 @@ cd tek-s3
 ```
 , or download a point release e.g.
 ```sh
-curl -LOJ https://github.com/teknology-hub/tek-s3/releases/download/v1.0.0/tek-s3-1.0.0.tar.gz`
-tar -xzf tek-s3-1.0.0.tar.gz
-cd tek-s3-1.0.0
+curl -LOJ https://github.com/teknology-hub/tek-s3/releases/download/vX.Y.Z/tek-s3-X.Y.Z.tar.gz`
+tar -xzf tek-s3-X.Y.Z.tar.gz
+cd tek-s3-X.Y.Z
 ```
 
 ## 3. Setup build directory
