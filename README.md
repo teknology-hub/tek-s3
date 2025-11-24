@@ -65,6 +65,7 @@ The server has the following HTTP GET endpoints:
   "apps": {
     "{App ID}": {
       "name": "{Application name}",
+      "pics_at": "{PICS access token}",
       "depots": [
         1,
         2,
