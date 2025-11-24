@@ -368,6 +368,10 @@ static void cb_app_info(tek_sc_cm_client *_Nonnull client, void *_Nonnull data,
             app_ent.name = std::move(name->second);
           }
         }
+        if (app.access_token != app_ent.pics_access_token) {
+          state.manifest_dirty = true;
+          app_ent.pics_access_token = app.access_token;
+        }
         for (auto depot_id : depot_ids) {
           const auto [it, emplaced]{app_ent.depots.try_emplace(depot_id)};
           if (emplaced) {

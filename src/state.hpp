@@ -111,6 +111,8 @@ struct depot {
 struct app {
   /// Name of the application.
   std::string name;
+  /// PICS access token for the application.
+  std::uint64_t pics_access_token;
   /// Depots belonging to the application, by ID.
   std::map<std::uint32_t, depot> depots;
 };

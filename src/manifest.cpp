@@ -104,6 +104,11 @@ void update_manifest() {
         str = "name";
         writer.Key(str.data(), str.length());
         writer.String(app.name.data(), app.name.length());
+        if (app.pics_access_token) {
+          str = "pics_at";
+          writer.Key(str.data(), str.length());
+          writer.Uint64(app.pics_access_token);
+        }
         str = "depots";
         writer.Key(str.data(), str.length());
         writer.StartArray();
