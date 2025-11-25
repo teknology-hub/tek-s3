@@ -78,6 +78,7 @@ The server has the following HTTP GET endpoints:
   }
 }
 ```
+- `/manifest-bin` - Same as `/manifest` but in binary format, which you may see in `src/manifest.cpp`. tek-steamclient supports and prefers it starting with version 2.1.0
 - `/mrc` - Takes 3 URL parameters, all mandatory: `app_id`, `depot_id` and `manifest_id`. On success, returns current manifest request code for given manifest. `401` status code is returned when none of available accounts have a license for specified app/depot, and `500` is returned when a tek-steamclient error occurs while requesting the manifest request code, usually due to invalid manifest ID being specified.
 
 There is a WebSocket endpoint `/signin` for submitting Steam accounts to the server. The communication is done entirely in text frames with JSON content in the following sequence:

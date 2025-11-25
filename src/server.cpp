@@ -108,31 +108,31 @@ static void cb_mrc(tek_sc_cm_client *, void *_Nonnull data, void *) {
 ///
 /// @param [in] accept
 ///    Value of the Accept-Encoding header sent by the client.
+/// @param [in] buf
+///    Buffer that will be sent back to the client.
 /// @return Value indicating which encoding shall be used.
-static constexpr enc_type
-negotiate_enc(const std::string_view &&accept) noexcept {
+static constexpr enc_type negotiate_enc(const std::string_view &&accept,
+                                        const http_buf &buf) noexcept {
   if (accept.empty()) {
     return enc_type::none;
   }
   auto enc{enc_type::none};
-  auto size{state.manifest.size};
-  if (state.manifest_deflate.buf && accept.contains("deflate") &&
-      state.manifest_deflate.size < size) {
+  auto size{buf.buf.size};
+  if (buf.deflate.buf && accept.contains("deflate") &&
+      buf.deflate.size < size) {
     enc = enc_type::deflate;
-    size = state.manifest_deflate.size;
+    size = buf.deflate.size;
   }
 #ifdef TEK_S3B_BROTLI
-  if (state.manifest_brotli.buf && accept.contains("br") &&
-      state.manifest_brotli.size < size) {
+  if (buf.brotli.buf && accept.contains("br") && buf.brotli.size < size) {
     enc = enc_type::brotli;
-    size = state.manifest_brotli.size;
+    size = buf.brotli.size;
   }
 #endif // def TEK_S3B_BROTLI
 #ifdef TEK_S3B_ZSTD
-  if (state.manifest_zstd.buf && accept.contains("zstd") &&
-      state.manifest_zstd.size < size) {
+  if (buf.zstd.buf && accept.contains("zstd") && buf.zstd.size < size) {
     enc = enc_type::zstd;
-    size = state.manifest_zstd.size;
+    size = buf.zstd.size;
   }
 #endif // def TEK_S3B_ZSTD
   return enc;
@@ -249,7 +249,7 @@ static int tsc_lws_cb(lws *_Nullable wsi, lws_callback_reasons reason,
       status = HTTP_STATUS_SERVICE_UNAVAILABLE;
       goto send_status;
     }
-    if (uri_view == "/manifest") {
+    if (uri_view == "/manifest" || uri_view == "/manifest-bin") {
       if (method != LWSHUMETH_GET) {
         status = HTTP_STATUS_METHOD_NOT_ALLOWED;
         goto send_status;
@@ -284,34 +284,33 @@ static int tsc_lws_cb(lws *_Nullable wsi, lws_callback_reasons reason,
         return 1;
       }
       // Select response encoding
-      const auto enc{
-          negotiate_enc({hdr_buf.data(), static_cast<std::size_t>(hdr_len)})};
+      const bool binary{uri_view != "/manifest"};
+      const auto &buf{binary ? state.manifest_bin : state.manifest};
+      const auto enc{negotiate_enc(
+          {hdr_buf.data(), static_cast<std::size_t>(hdr_len)}, buf)};
       auto set_enc{[&hdr_buf, &hdr_len](const std::string_view &&name) {
         std::ranges::copy(name, hdr_buf.data());
         hdr_len = name.length();
       }};
       switch (enc) {
       case enc_type::none:
-        session.data = {state.manifest.buf.get(), state.manifest.size};
+        session.data = {buf.buf.buf.get(), buf.buf.size};
         break;
       case enc_type::deflate: {
-        session.data = {state.manifest_deflate.buf.get(),
-                        state.manifest_deflate.size};
+        session.data = {buf.deflate.buf.get(), buf.deflate.size};
         set_enc("deflate");
         break;
       }
 #ifdef TEK_S3B_BROTLI
       case enc_type::brotli: {
-        session.data = {state.manifest_brotli.buf.get(),
-                        state.manifest_brotli.size};
+        session.data = {buf.brotli.buf.get(), buf.brotli.size};
         set_enc("br");
         break;
       }
 #endif // def TEK_S3B_BROTLI
 #ifdef TEK_S3B_ZSTD
       case enc_type::zstd: {
-        session.data = {state.manifest_zstd.buf.get(),
-                        state.manifest_zstd.size};
+        session.data = {buf.zstd.buf.get(), buf.zstd.size};
         set_enc("zstd");
         break;
       }
@@ -319,7 +318,9 @@ static int tsc_lws_cb(lws *_Nullable wsi, lws_callback_reasons reason,
       }
       // Write headers
       if (lws_add_http_common_headers(wsi, HTTP_STATUS_OK,
-                                      "application/json; charset=utf-8",
+                                      binary
+                                          ? "application/octet-stream"
+                                          : "application/json; charset=utf-8",
                                       session.data.size(), &buf_cur, buf_end)) {
         return 1;
       }

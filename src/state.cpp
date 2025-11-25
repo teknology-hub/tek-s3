@@ -41,12 +41,23 @@
 #include <tek-steamclient/base.h>
 #include <tek-steamclient/os.h>
 #include <utility>
+#ifdef TEK_S3B_ZNG
+#include <zlib-ng.h>
+#else // def TEK_S3B_ZNG
+#include <zlib.h>
+#endif // def TEK_S3B_ZNG else
+#ifdef TEK_S3B_BROTLI
+#include <brotli/encode.h>
+#endif // def TEK_S3B_BROTLI
+#ifdef TEK_S3B_ZSTD
+#include <zstd.h>
+#endif // def TEK_S3B_ZSTD
 
 namespace tek::s3 {
 
 namespace {
 
-//===-- Private variable --------------------------------------------------===//
+//===-- Private variables -------------------------------------------------===//
 
 /// permessage-deflate WebSocket extension object.
 static constexpr lws_extension ws_pm_ext[]{
@@ -80,6 +91,18 @@ static constexpr lws_http_mount mount{.mount_next = nullptr,
                                       .headers = nullptr,
                                       .keepalive_timeout = 0};
 
+#ifdef TEK_S3B_ZNG
+
+static constexpr auto &compressBound{::zng_compressBound};
+static constexpr auto &compress2{::zng_compress2};
+
+#else // def TEK_S3B_ZNG
+
+static constexpr auto compressBound{::compressBound};
+static constexpr auto compress2{::compress2};
+
+#endif // def TEK_S3B_ZNG else
+
 //===-- Private function --------------------------------------------------===//
 
 /// Print an OS error message to stderr.
@@ -97,9 +120,74 @@ static inline void print_os_err(tek_sc_os_errc errc,
 
 } // namespace
 
-} // namespace tek::s3
-
 //===-- Internal functions ------------------------------------------------===//
+
+http_buf::http_buf(sized_buf &&new_buf, bool binary) : buf{std::move(new_buf)} {
+  // Deflate
+  {
+    const auto worst_size{compressBound(buf.size)};
+    auto tmp_buf{std::make_unique_for_overwrite<unsigned char[]>(worst_size)};
+    deflate.size = worst_size;
+#ifdef TEK_S3B_ZNG
+    std::size_t size;
+#else  // def TEK_S3B_ZNG
+    uLongf size;
+#endif // def TEK_S3B_ZNG else
+    const auto res{compress2(tmp_buf.get(), &size, buf.buf.get(), buf.size,
+                             Z_BEST_COMPRESSION)};
+    deflate.size = size;
+    if (res != Z_OK) {
+      deflate.buf.reset();
+      deflate.size = 0;
+    } else if (deflate.size == worst_size) {
+      deflate.buf = std::move(tmp_buf);
+    } else {
+      deflate.buf.reset(new unsigned char[deflate.size]);
+      std::ranges::copy_n(tmp_buf.get(), deflate.size, deflate.buf.get());
+    }
+  }
+#ifdef TEK_S3B_BROTLI
+  // Brotli
+  {
+    const auto worst_size{BrotliEncoderMaxCompressedSize(buf.size)};
+    auto tmp_buf{std::make_unique_for_overwrite<unsigned char[]>(worst_size)};
+    brotli.size = worst_size;
+    const int res{BrotliEncoderCompress(
+        BROTLI_MAX_QUALITY, BROTLI_MAX_WINDOW_BITS,
+        binary ? BROTLI_MODE_GENERIC : BROTLI_MODE_TEXT, buf.size,
+        buf.buf.get(), &brotli.size, tmp_buf.get())};
+    if (res == BROTLI_FALSE) {
+      brotli.buf.reset();
+      brotli.size = 0;
+    } else if (brotli.size == worst_size) {
+      brotli.buf = std::move(tmp_buf);
+    } else {
+      brotli.buf.reset(new unsigned char[brotli.size]);
+      std::ranges::copy_n(tmp_buf.get(), brotli.size, brotli.buf.get());
+    }
+  }
+#endif // def TEK_S3B_BROTLI
+#ifdef TEK_S3B_ZSTD
+  // Zstandard
+  {
+    const auto worst_size{ZSTD_compressBound(buf.size)};
+    auto tmp_buf{std::make_unique_for_overwrite<unsigned char[]>(worst_size)};
+    zstd.size = ZSTD_compress(tmp_buf.get(), worst_size, buf.buf.get(),
+                              buf.size, ZSTD_maxCLevel());
+    if (ZSTD_isError(zstd.size)) {
+      zstd.buf.reset();
+      zstd.size = 0;
+    } else if (zstd.size == worst_size) {
+      zstd.buf = std::move(tmp_buf);
+    } else {
+      zstd.buf.reset(new unsigned char[zstd.size]);
+      std::ranges::copy_n(tmp_buf.get(), zstd.size, zstd.buf.get());
+    }
+  }
+#endif // def TEK_S3B_ZSTD
+}
+
+} // namespace tek::s3
 
 using namespace tek::s3;
 
@@ -191,8 +279,8 @@ bool ts3_init(void) {
     }
     if (const auto apps{doc.FindMember("apps")};
         apps != doc.MemberEnd() && apps->value.IsObject()) {
-      for (const auto &[id, depots] : apps->value.GetObject()) {
-        if (!depots.IsArray()) {
+      for (const auto &[id, app_ent] : apps->value.GetObject()) {
+        if (!app_ent.IsObject()) {
           continue;
         }
         std::uint32_t app_id;
@@ -201,8 +289,16 @@ bool ts3_init(void) {
             std::errc{}) {
           continue;
         }
-        for (auto &app{state.apps.try_emplace(app_id).first->second};
-             const auto &depot_id : depots.GetArray()) {
+        auto &app{state.apps.try_emplace(app_id).first->second};
+        const auto pics_at{app_ent.FindMember("pics_at")};
+        if (pics_at != app_ent.MemberEnd() && pics_at->value.IsUint64()) {
+          app.pics_access_token = pics_at->value.GetUint64();
+        }
+        const auto depots{app_ent.FindMember("depots")};
+        if (depots == app_ent.MemberEnd() || !depots->value.IsArray()) {
+          continue;
+        }
+        for (const auto &depot_id : depots->value.GetArray()) {
           if (!depot_id.IsUint()) {
             continue;
           }

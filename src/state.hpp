@@ -166,7 +166,25 @@ struct sized_buf {
   /// Pointer to the buffer.
   std::unique_ptr<unsigned char[]> buf;
   /// Size of the buffer pointed to by @ref buf, in bytes.
-  std::size_t size;
+  std::size_t size{};
+};
+
+/// A buffer with pre-compressed versions for returning over HTTP.
+struct [[gnu::visibility("internal")]] http_buf {
+  /// The main buffer.
+  sized_buf buf;
+  /// @ref buf pre-compressed with deflate.
+  sized_buf deflate;
+#ifdef TEK_S3B_BROTLI
+  /// @ref buf pre-compressed with brotli.
+  sized_buf brotli;
+#endif // TEK_S3B_BROTLI
+#ifdef TEK_S3B_ZSTD
+  /// @ref buf pre-compressed with zstd.
+  sized_buf zstd;
+#endif // TEK_S3B_ZSTD
+  constexpr http_buf() noexcept {}
+  http_buf(sized_buf &&buf, bool binary);
 };
 
 /// tek-s3 program state.
@@ -190,17 +208,9 @@ struct ts3_state {
   /// Known AES-256 depot decryption keys.
   std::map<std::uint32_t, tek_sc_aes256_key> depot_keys;
   /// Pre-serialized manifest JSON.
-  sized_buf manifest;
-  /// @ref manifest pre-compressed with deflate.
-  sized_buf manifest_deflate;
-#ifdef TEK_S3B_BROTLI
-  /// @ref manifest pre-compressed with brotli.
-  sized_buf manifest_brotli;
-#endif // TEK_S3B_BROTLI
-#ifdef TEK_S3B_ZSTD
-  /// @ref manifest pre-compressed with zstd.
-  sized_buf manifest_zstd;
-#endif // TEK_S3B_ZSTD
+  http_buf manifest;
+  /// Pre-serialized binary manifest.
+  http_buf manifest_bin;
   /// Manifest request code cache.
   std::map<std::uint64_t, mrc_cache> mrcs;
   /// Pointers to active sign-in contexts.
