@@ -23,12 +23,15 @@
 #include <charconv>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 #include <iostream>
+#include <memory>
 #include <print>
 #include <ranges>
 #include <rapidjson/stringbuffer.h>
 #include <rapidjson/writer.h>
+#include <span>
 #include <string_view>
 #include <system_error>
 #include <tek-steamclient/os.h>
@@ -38,27 +41,56 @@
 #else // def TEK_S3B_ZNG
 #include <zlib.h>
 #endif // def TEK_S3B_ZNG else
-#ifdef TEK_S3B_BROTLI
-#include <brotli/encode.h>
-#endif // def TEK_S3B_BROTLI
-#ifdef TEK_S3B_ZSTD
-#include <zstd.h>
-#endif // def TEK_S3B_ZSTD
 
 namespace tek::s3 {
 
 namespace {
 
+//===-- Binary manifest types ---------------------------------------------===//
+//
+// The structure of binary manifest is as following:
+//    bmanifest_hdr
+//    bmanifest_app[num_apps]
+//    std::uint32_t[num_depots]
+//    bmanifest_depot_key[num_depot_keys]
+//    char names[*the remainder of buffer*]
+
+/// Binary manifest header.
+struct bmanifest_hdr {
+  /// CRC32 checksum for the remainder of serialized data (excluding itself).
+  std::uint32_t crc;
+  /// Total number of application entries in the manifest.
+  std::int32_t num_apps;
+  /// Total number of depot entries in the manifest.
+  std::int32_t num_depots;
+  /// Total number of depot decryption key entries in the manifest.
+  std::int32_t num_depot_keys;
+};
+
+/// Binary manifest application entry.
+struct bmanifest_app {
+  /// PICS access token for the application.
+  std::uint64_t pics_access_token;
+  /// Length of the application's name, in bytes.
+  std::int32_t name_len;
+  /// Number of depot IDs assigned to the application.
+  std::int32_t num_depots;
+};
+
+/// Binary manifest depot decryption key entry.
+struct bmanifest_depot_key {
+  /// ID of the depot.
+  std::int32_t id;
+  /// Decryption key for the depot.
+  tek_sc_aes256_key key;
+};
+
+//===-- Private functions -------------------------------------------------===//
+
 #ifdef TEK_S3B_ZNG
-
-static constexpr auto &compressBound{::zng_compressBound};
-static constexpr auto &compress2{::zng_compress2};
-
-#else // def TEK_S3B_ZNG
-
-static constexpr auto compressBound{::compressBound};
-static constexpr auto compress2{::compress2};
-
+static constexpr auto &crc32{::zng_crc32};
+#else  // def TEK_S3B_ZNG
+static constexpr auto &crc32{::crc32};
 #endif // def TEK_S3B_ZNG else
 
 /// Print an OS error message to stderr.
@@ -78,142 +110,116 @@ static inline void print_os_err(tek_sc_os_errc errc,
 
 void update_manifest() {
   rapidjson::StringBuffer buf;
-  if (state.manifest_dirty || !state.manifest.size) {
+  if (state.manifest_dirty || !state.manifest.buf.size) {
     if (state.manifest_dirty) {
       state.state_dirty = true;
       state.manifest_dirty = false;
       state.timestamp = std::chrono::system_clock::to_time_t(
           std::chrono::system_clock::now());
     }
-    // Serialize manifest into JSON
-    {
-      rapidjson::Writer writer{buf};
-      writer.StartObject();
-      std::string_view str{"apps"};
+    // Serialize JSON manifest
+    rapidjson::Writer writer{buf};
+    writer.StartObject();
+    std::string_view str{"apps"};
+    writer.Key(str.data(), str.length());
+    writer.StartObject();
+    for (const auto &[app_id, app] : state.apps) {
+      std::array<char, 10> id_buf;
+      const auto res{std::to_chars(id_buf.begin(), id_buf.end(), app_id)};
+      if (res.ec != std::errc{}) {
+        continue;
+      }
+      str = {id_buf.data(), res.ptr};
       writer.Key(str.data(), str.length());
       writer.StartObject();
-      for (const auto &[app_id, app] : state.apps) {
-        std::array<char, 10> id_buf;
-        const auto res{std::to_chars(id_buf.begin(), id_buf.end(), app_id)};
-        if (res.ec != std::errc{}) {
-          continue;
-        }
-        str = {id_buf.data(), res.ptr};
-        writer.Key(str.data(), str.length());
-        writer.StartObject();
-        str = "name";
-        writer.Key(str.data(), str.length());
-        writer.String(app.name.data(), app.name.length());
-        if (app.pics_access_token) {
-          str = "pics_at";
-          writer.Key(str.data(), str.length());
-          writer.Uint64(app.pics_access_token);
-        }
-        str = "depots";
-        writer.Key(str.data(), str.length());
-        writer.StartArray();
-        for (auto depot_id : app.depots | std::views::keys) {
-          writer.Uint(depot_id);
-        }
-        writer.EndArray();
-        writer.EndObject();
-      }
-      writer.EndObject();
-      str = "depot_keys";
+      str = "name";
       writer.Key(str.data(), str.length());
-      writer.StartObject();
-      for (const auto &[depot_id, key] : state.depot_keys) {
-        std::array<char, 10> id_buf;
-        const auto res = std::to_chars(id_buf.begin(), id_buf.end(), depot_id);
-        if (res.ec != std::errc{}) {
-          continue;
-        }
-        str = {id_buf.data(), res.ptr};
+      writer.String(app.name.data(), app.name.length());
+      if (app.pics_access_token) {
+        str = "pics_at";
         writer.Key(str.data(), str.length());
-        std::array<char, 44> b64_key;
-        ts3_u_base64_encode(key, sizeof key, b64_key.data());
-        writer.String(b64_key.data(), b64_key.size());
+        writer.Uint64(app.pics_access_token);
       }
+      str = "depots";
+      writer.Key(str.data(), str.length());
+      writer.StartArray();
+      for (auto depot_id : app.depots | std::views::keys) {
+        writer.Uint(depot_id);
+      }
+      writer.EndArray();
       writer.EndObject();
-      writer.EndObject();
-      // Copy serialized JSON into the manifest buffer
-      state.manifest.buf.reset(new unsigned char[buf.GetSize()]);
-      state.manifest.size = buf.GetSize();
-      std::ranges::copy_n(buf.GetString(), buf.GetSize(),
-                          state.manifest.buf.get());
-    } // Manifest JSON serialization scope
+    }
+    writer.EndObject();
+    str = "depot_keys";
+    writer.Key(str.data(), str.length());
+    writer.StartObject();
+    for (const auto &[depot_id, key] : state.depot_keys) {
+      std::array<char, 10> id_buf;
+      const auto res = std::to_chars(id_buf.begin(), id_buf.end(), depot_id);
+      if (res.ec != std::errc{}) {
+        continue;
+      }
+      str = {id_buf.data(), res.ptr};
+      writer.Key(str.data(), str.length());
+      std::array<char, 44> b64_key;
+      ts3_u_base64_encode(key, sizeof key, b64_key.data());
+      writer.String(b64_key.data(), b64_key.size());
+    }
+    writer.EndObject();
+    writer.EndObject();
+    // Copy serialized JSON into a buffer
+    sized_buf json_buf{
+        .buf = std::make_unique_for_overwrite<unsigned char[]>(buf.GetSize()),
+        .size = buf.GetSize()};
+    std::ranges::copy_n(buf.GetString(), json_buf.size, json_buf.buf.get());
+    state.manifest = {std::move(json_buf), false};
     buf.Clear();
-    // Deflate the manifest
-    {
-      const auto worst_size{compressBound(state.manifest.size)};
-      auto tmp_buf{std::make_unique_for_overwrite<unsigned char[]>(worst_size)};
-      state.manifest_deflate.size = worst_size;
-#ifdef TEK_S3B_ZNG
-      std::size_t size;
-#else  // def TEK_S3B_ZNG
-      uLongf size;
-#endif // def TEK_S3B_ZNG else
-      const auto res{compress2(tmp_buf.get(), &size, state.manifest.buf.get(),
-                               state.manifest.size, Z_BEST_COMPRESSION)};
-      state.manifest_deflate.size = size;
-      if (res != Z_OK) {
-        state.manifest_deflate.buf.reset();
-        state.manifest_deflate.size = 0;
-      } else if (state.manifest_deflate.size == worst_size) {
-        state.manifest_deflate.buf = std::move(tmp_buf);
-      } else {
-        state.manifest_deflate.buf.reset(
-            new unsigned char[state.manifest_deflate.size]);
-        std::ranges::copy_n(tmp_buf.get(), state.manifest_deflate.size,
-                            state.manifest_deflate.buf.get());
-      }
+    // Serialize binary manifest
+    for (auto &a : state.apps) {
+      a.second.depots.size();
     }
-#ifdef TEK_S3B_BROTLI
-    // Compress the manifest with brotli
-    {
-      const auto worst_size{
-          BrotliEncoderMaxCompressedSize(state.manifest.size)};
-      auto tmp_buf{std::make_unique_for_overwrite<unsigned char[]>(worst_size)};
-      state.manifest_brotli.size = worst_size;
-      const int res{BrotliEncoderCompress(
-          BROTLI_MAX_QUALITY, BROTLI_MAX_WINDOW_BITS, BROTLI_MODE_TEXT,
-          state.manifest.size, state.manifest.buf.get(),
-          &state.manifest_brotli.size, tmp_buf.get())};
-      if (res == BROTLI_FALSE) {
-        state.manifest_brotli.buf.reset();
-        state.manifest_brotli.size = 0;
-      } else if (state.manifest_brotli.size == worst_size) {
-        state.manifest_brotli.buf = std::move(tmp_buf);
-      } else {
-        state.manifest_brotli.buf.reset(
-            new unsigned char[state.manifest_brotli.size]);
-        std::ranges::copy_n(tmp_buf.get(), state.manifest_brotli.size,
-                            state.manifest_brotli.buf.get());
-      }
+    std::size_t num_depots = 0;
+    std::size_t names_len = 0;
+    for (const auto &app : state.apps | std::views::values) {
+      num_depots += app.depots.size();
+      names_len += app.name.length();
     }
-#endif // def TEK_S3B_BROTLI
-#ifdef TEK_S3B_ZSTD
-    // Compress the manifest with zstd
-    {
-      const auto worst_size{ZSTD_compressBound(state.manifest.size)};
-      auto tmp_buf{std::make_unique_for_overwrite<unsigned char[]>(worst_size)};
-      state.manifest_zstd.size =
-          ZSTD_compress(tmp_buf.get(), worst_size, state.manifest.buf.get(),
-                        state.manifest.size, ZSTD_maxCLevel());
-      if (ZSTD_isError(state.manifest_zstd.size)) {
-        state.manifest_zstd.buf.reset();
-        state.manifest_zstd.size = 0;
-      } else if (state.manifest_zstd.size == worst_size) {
-        state.manifest_zstd.buf = std::move(tmp_buf);
-      } else {
-        state.manifest_zstd.buf.reset(
-            new unsigned char[state.manifest_zstd.size]);
-        std::ranges::copy_n(tmp_buf.get(), state.manifest_zstd.size,
-                            state.manifest_zstd.buf.get());
-      }
+    const auto bmanifest_size{
+        sizeof(bmanifest_hdr) + sizeof(bmanifest_app) * state.apps.size() +
+        sizeof(std::uint32_t) * num_depots +
+        sizeof(bmanifest_depot_key) * state.depot_keys.size() + names_len};
+    auto bmanifest{
+        std::make_unique_for_overwrite<unsigned char[]>(bmanifest_size)};
+    auto &hdr{*reinterpret_cast<bmanifest_hdr *>(bmanifest.get())};
+    hdr.num_apps = state.apps.size();
+    hdr.num_depots = num_depots;
+    hdr.num_depot_keys = state.depot_keys.size();
+    std::span<bmanifest_app> bapps{reinterpret_cast<bmanifest_app *>(&hdr + 1),
+                                   state.apps.size()};
+    std::span<std::uint32_t> depots{
+        reinterpret_cast<std::uint32_t *>(std::to_address(bapps.end())),
+        num_depots};
+    std::span<bmanifest_depot_key> bdepot_keys{
+        reinterpret_cast<bmanifest_depot_key *>(std::to_address(depots.end())),
+        state.depot_keys.size()};
+    auto names{reinterpret_cast<char *>(std::to_address(bdepot_keys.end()))};
+    auto depot_it{depots.begin()};
+    for (auto &&[bapp, app] :
+         std::views::zip(bapps, state.apps | std::views::values)) {
+      bapp = {.pics_access_token = app.pics_access_token,
+              .name_len = static_cast<std::int32_t>(app.name.length()),
+              .num_depots = static_cast<std::int32_t>(app.depots.size())};
+      names = std::ranges::copy(app.name, names).out;
+      depot_it = std::ranges::copy(app.depots | std::views::keys, depot_it).out;
     }
-#endif // def TEK_S3B_ZSTD
-  } // Manifest update scope
+    for (auto &&[bdk, dk] : std::views::zip(bdepot_keys, state.depot_keys)) {
+      bdk.id = dk.first;
+      std::ranges::copy(dk.second, bdk.key);
+    }
+    hdr.crc = crc32(crc32(0, nullptr, 0), &bmanifest[sizeof hdr.crc],
+                    bmanifest_size - sizeof hdr.crc);
+    state.manifest_bin = {{std::move(bmanifest), bmanifest_size}, true};
+  } // if (state.manifest_dirty || !state.manifest.buf.size)
   // Update the state file if it's marked dirty
   if (state.state_dirty) {
     state.state_dirty = false;
@@ -243,11 +249,20 @@ void update_manifest() {
       }
       str = {id_buf.data(), res.ptr};
       writer.Key(str.data(), str.length());
+      writer.StartObject();
+      if (app.pics_access_token) {
+        str = "pics_at";
+        writer.Key(str.data(), str.length());
+        writer.Uint64(app.pics_access_token);
+      }
+      str = "depots";
+      writer.Key(str.data(), str.length());
       writer.StartArray();
       for (auto depot_id : app.depots | std::views::keys) {
         writer.Uint(depot_id);
       }
       writer.EndArray();
+      writer.EndObject();
     }
     writer.EndObject();
     str = "depot_keys";
@@ -302,7 +317,7 @@ void update_manifest() {
       print_os_err(ts3_os_get_last_error(),
                    "Cannot save state; failed to write to the state file");
     }
-  } // State file update scope
+  } // if (state.state_dirty)
 }
 
 } // namespace tek::s3
