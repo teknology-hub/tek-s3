@@ -13,7 +13,7 @@ There is a statically linked tek-s3.exe in [releases](https://github.com/teknolo
 
 ### Linux
 
-There is `tek-s3-x86_64.AppImage` in [releases](https://github.com/teknology-hub/tek-s3/releases), which is built in a Fedora 43 container and signed by Nuclearist's [GPG key](https://teknology-hub.com/public-keys/nuclearist.asc). The .full.AppImage also includes libstdc++.so and libc.so, so it can run on systems that have too old versions of those, or don't use libstdc++. It can be run with `TEK_S3_USE_SYSTEM_LIBS=1` environment variable to prefer system libraries over bundled ones.
+There is `tek-s3-x86_64.AppImage` in [releases](https://github.com/teknology-hub/tek-s3/releases), which is built in a Fedora 43 container. It can be run with `TEK_S3_USE_SYSTEM_LIBS=1` environment variable to prefer system libraries over bundled ones.
 
 Alternatively, you may install a package for your distro listed below, or [build from source](https://github.com/teknology-hub/tek-s3/blob/main/BUILD.md) if it's not there.
 
