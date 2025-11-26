@@ -223,13 +223,15 @@ static int tsc_lws_cb(lws *_Nullable wsi, lws_callback_reasons reason,
   case LWS_CALLBACK_SERVER_WRITEABLE: {
     auto &session{*reinterpret_cast<ws_ctx *>(user)};
     const std::scoped_lock lock{session.s_ctx->mtx};
-    if (session.s_ctx->msg_size <= 0) {
+    auto &msg_size{session.s_ctx->msg_size};
+    if (msg_size <= 0) {
       break;
     }
-    if (lws_write(wsi, &session.tx_buf[LWS_PRE], session.s_ctx->msg_size,
-                  LWS_WRITE_TEXT) < session.s_ctx->msg_size) {
+    if (lws_write(wsi, &session.tx_buf[LWS_PRE], msg_size, LWS_WRITE_TEXT) <
+        msg_size) {
       return 1;
     }
+    msg_size = 0;
     return (session.s_ctx->state >= signin_state::done) ? 1 : 0;
   }
   case LWS_CALLBACK_HTTP: {
